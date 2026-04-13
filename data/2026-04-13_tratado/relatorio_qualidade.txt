@@ -1,0 +1,98 @@
+============================================================
+  TecMente — Relatório de Qualidade de Dados
+  Gerado em : 2026-04-13 18:44:31
+  Duração   : 5.4s
+============================================================
+
+────────────────────────────────────────────────────────────
+  clientes.csv — estado inicial
+────────────────────────────────────────────────────────────
+  Linhas lidas                                  3500
+
+────────────────────────────────────────────────────────────
+  Nulos — clientes.csv (bruto)
+────────────────────────────────────────────────────────────
+  sobrenome                             588 (16.8%)
+  telefone                              285 (8.1%)
+  data_nascimento                       438 (12.5%)
+
+────────────────────────────────────────────────────────────
+  clientes.csv — resultado do tratamento
+────────────────────────────────────────────────────────────
+  Linhas de entrada                             3500
+  Linhas na saída                               3500
+  E-mails corrigidos (.con→.com)                1147
+  E-mails inválidos (flagged)                   0
+  Idades calculadas                             3062
+  Idades não calculadas (sem data)              438
+
+────────────────────────────────────────────────────────────
+  vendas.csv — estado inicial
+────────────────────────────────────────────────────────────
+  Linhas lidas                                  151684
+  Pedidos únicos                                50000
+
+────────────────────────────────────────────────────────────
+  Nulos — vendas.csv (bruto)
+────────────────────────────────────────────────────────────
+  obs                                 151684 (100.0%)
+
+────────────────────────────────────────────────────────────
+  vendas.csv — colunas removidas (100% nulas)
+────────────────────────────────────────────────────────────
+  obs                                           removida
+
+────────────────────────────────────────────────────────────
+  vendas.csv — resultado do tratamento
+────────────────────────────────────────────────────────────
+  Linhas de entrada                             151684
+  Pedidos ativos (saída)                        48154
+  Pedidos cancelados                            1846
+  Itens ativos (linhas)                         146104
+  Itens cancelados (linhas)                     5580
+  Receita total (ativos)                        R$ 84,581,416.97
+  Lucro bruto total (ativos)                    R$ 34,033,623.62
+  Margem média (%)                              40.2%
+
+────────────────────────────────────────────────────────────
+  produtos_estoque.csv — estado inicial
+────────────────────────────────────────────────────────────
+  Linhas lidas                                  918
+  Produtos únicos                               153
+
+────────────────────────────────────────────────────────────
+  Nulos — produtos_estoque.csv (bruto)
+────────────────────────────────────────────────────────────
+  Nenhum nulo encontrado.
+
+────────────────────────────────────────────────────────────
+  produtos_estoque.csv — resultado
+────────────────────────────────────────────────────────────
+  Produtos únicos                               153
+  Sem estoque (qtd = 0)                         0
+  Margem média (%)                              40.0%
+    Faixa LOW                                   90 registros
+    Faixa MID                                   270 registros
+    Faixa HIGH                                  300 registros
+    Faixa ULTRA                                 258 registros
+
+────────────────────────────────────────────────────────────
+  equipe_lojas.csv — estado inicial
+────────────────────────────────────────────────────────────
+  Linhas lidas                                  80
+
+────────────────────────────────────────────────────────────
+  Nulos — equipe_lojas.csv (bruto)
+────────────────────────────────────────────────────────────
+  Nenhum nulo encontrado.
+
+────────────────────────────────────────────────────────────
+  equipe_lojas.csv — resultado
+────────────────────────────────────────────────────────────
+  Funcionários                                  80
+  Salário médio                                 R$ 7,234.61
+  Tempo médio de casa (anos)                    2.6
+    Faixa Júnior                                7 funcionários
+    Faixa Pleno                                 26 funcionários
+    Faixa Sênior                                20 funcionários
+    Faixa Especialista                          27 funcionários

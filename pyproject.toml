@@ -1,0 +1,28 @@
+[project]
+name = "tecmente"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "edsondeveza",email = "edsondeveza@hotmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "faker (>=40.11.0,<41.0.0)",
+    "pandas (>=3.0.1,<4.0.0)",
+    "mysql-connector-python (==8.4.0)",
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "seaborn (>=0.13.2,<0.14.0)",
+    "plotly (>=6.6.0,<7.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "tecmente", from = "src"}]
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^7.2.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
