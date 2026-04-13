@@ -362,19 +362,12 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 
 | Etapa               | Script                   | Status       | Validado em |
 | ------------------- | ------------------------ | ------------ | ----------- |
-| Schema do banco     | `tecmente_schema_v2.sql` | ✅ Concluído | 2026-03-19  |
-| Geração de dados    | `gerador_mestre.py`      | ✅ Concluído | 2026-03-19  |
-| Extração DBA        | `extrator.py`            | ✅ Concluído | 2026-03-19  |
-| Tratamento Analista | `tratador.py`            | ✅ Concluído | 2026-03-19  |
-| Entrega ao BI       | `vizualizador.py`        | ✅ Concluído | 2026-03-25  |
+| Schema do banco     | `tecmente_schema_v2.sql` | ✅ Concluído | 2026-04-13  |
+| Geração de dados    | `gerador_mestre.py`      | ✅ Concluído | 2026-04-13  |
+| Extração DBA        | `extrator.py`            | ✅ Concluído | 2026-04-13 |
+| Tratamento Analista | `tratador.py`            | ✅ Concluído | 2026-04-13 |
+| Entrega ao BI       | `vizualizador.py`        | ✅ Concluído | 2026-04-13 |
 
-**Resultado da última execução validada (2026-03-25):**
-
-```
-extrator.py     → 106.729 linhas extraídas em 4.7s — 0 erros
-tratador.py     → 100.614 linhas ativas (33.773 pedidos) + 3.617 cancelados
-vizualizador.py → 8 PNGs gerados — 0 erros
-```
 
 ---
 
