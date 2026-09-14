@@ -182,7 +182,8 @@ Todas as taxas de ruído são controláveis por constantes no topo de `gerador_m
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/seu-usuario/tecmente.git
+git clone https://github.com/edsondeveza/tecmente.git
+
 cd tecmente
 
 # 2. Instale as dependências
