@@ -34,12 +34,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from datetime import timedelta
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 import pandas as pd
 import seaborn as sns
+from matplotlib.patches import Patch
 
 from config import DB_CONFIG, ENCODING
 
@@ -76,15 +75,13 @@ CAMINHO_RELATORIOS: Path = Path(__file__).parent / "output" / "relatorios"
 # Apoio     : cinza-chumbo, branco   — neutros para texto e fundo
 
 PALETA: dict[str, str] = {
-    "primaria":    "#1B3A5C",   # azul-petróleo
-    "secundaria":  "#E8A020",   # âmbar
-    "destaque":    "#2E86AB",   # azul-médio (séries adicionais)
-    "alerta":      "#C0392B",   # vermelho (cancelamentos, queda)
-    "neutro":      "#5D6D7E",   # cinza-chumbo
-    "fundo":       "#F4F6F8",   # cinza-claro (background dos gráficos)
-    "texto":       "#1C2833",   # quase-preto
-
-
+    "primaria": "#1B3A5C",  # azul-petróleo
+    "secundaria": "#E8A020",  # âmbar
+    "destaque": "#2E86AB",  # azul-médio (séries adicionais)
+    "alerta": "#C0392B",  # vermelho (cancelamentos, queda)
+    "neutro": "#5D6D7E",  # cinza-chumbo
+    "fundo": "#F4F6F8",  # cinza-claro (background dos gráficos)
+    "texto": "#1C2833",  # quase-preto
 }
 
 # Sequência de cores para gráficos com múltiplas categorias
@@ -93,9 +90,9 @@ SEQUENCIA_CORES: list[str] = [
     PALETA["secundaria"],
     PALETA["destaque"],
     PALETA["neutro"],
-    "#7D3C98",   # roxo
-    "#117A65",   # verde-escuro
-    "#D35400",   # laranja
+    "#7D3C98",  # roxo
+    "#117A65",  # verde-escuro
+    "#D35400",  # laranja
 ]
 
 # ---------------------------------------------------------------------------
@@ -122,9 +119,7 @@ def resolver_caminho_dados(base: Path) -> Path:
 
     pastas = sorted(base.glob("*_tratado"), reverse=True)
     if not pastas:
-        raise FileNotFoundError(
-            f"Nenhuma pasta '_tratado' encontrada em: {base}"
-        )
+        raise FileNotFoundError(f"Nenhuma pasta '_tratado' encontrada em: {base}")
     escolhida = pastas[0]
     log.info("Pasta de dados resolvida: %s", escolhida)
     return escolhida
@@ -137,24 +132,26 @@ def resolver_caminho_dados(base: Path) -> Path:
 
 def configurar_estilo() -> None:
     """Aplica o estilo visual padrão TecMente em todos os gráficos."""
-    plt.rcParams.update({
-        "figure.facecolor":   PALETA["fundo"],
-        "axes.facecolor":     "white",
-        "axes.edgecolor":     PALETA["neutro"],
-        "axes.titlesize":     14,
-        "axes.titleweight":   "bold",
-        "axes.titlecolor":    PALETA["texto"],
-        "axes.labelcolor":    PALETA["texto"],
-        "xtick.color":        PALETA["neutro"],
-        "ytick.color":        PALETA["neutro"],
-        "font.family":        "sans-serif",
-        "text.color":         PALETA["texto"],
-        "figure.dpi":         150,
-        "axes.grid":          True,
-        "grid.color":         "#E5E8EA",
-        "grid.linewidth":     0.7,
+    plt.rcParams.update(
+        {
+            "figure.facecolor": PALETA["fundo"],
+            "axes.facecolor": "white",
+            "axes.edgecolor": PALETA["neutro"],
+            "axes.titlesize": 14,
+            "axes.titleweight": "bold",
+            "axes.titlecolor": PALETA["texto"],
+            "axes.labelcolor": PALETA["texto"],
+            "xtick.color": PALETA["neutro"],
+            "ytick.color": PALETA["neutro"],
+            "font.family": "sans-serif",
+            "text.color": PALETA["texto"],
+            "figure.dpi": 150,
+            "axes.grid": True,
+            "grid.color": "#E5E8EA",
+            "grid.linewidth": 0.7,
+        }
+    )
 
-    })
 
 # ---------------------------------------------------------------------------
 # Utilitários
@@ -237,6 +234,7 @@ def carregar_dados(
 
     raise ValueError(f"FONTE inválida: '{FONTE}'. Use 'csv' ou 'sql'.")
 
+
 # ---------------------------------------------------------------------------
 # Dashboard 01 — % de faturamento por loja (Filiais vs CD Online)
 # ---------------------------------------------------------------------------
@@ -274,8 +272,7 @@ def dashboard_01_faturamento_por_loja() -> None:
         .sum()
         .sort_values(by=["subtotal"], ascending=False)  # type: ignore
     )
-    faturamento.rename(
-        columns={"loja_nome": "loja", "subtotal": "total"}, inplace=True)
+    faturamento.rename(columns={"loja_nome": "loja", "subtotal": "total"}, inplace=True)
 
     total_geral: float = faturamento["total"].sum()
     faturamento["pct"] = faturamento["total"] / total_geral * 100
@@ -283,9 +280,9 @@ def dashboard_01_faturamento_por_loja() -> None:
     n_lojas: int = len(faturamento)
 
     # Garante quantidade suficiente de cores
-    cores: list[str] = (
-        SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1)
-    )[:n_lojas]
+    cores: list[str] = (SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1))[
+        :n_lojas
+    ]
 
     # ------------------------------------------------------------------ #
     # Criação da figura
@@ -367,7 +364,8 @@ def dashboard_01_faturamento_por_loja() -> None:
 
     ax_barras.xaxis.set_major_formatter(
         plt.FuncFormatter(  # type: ignore
-            lambda x, _: f"R$ {x/1_000_000:.1f}M")
+            lambda x, _: f"R$ {x / 1_000_000:.1f}M"
+        )
     )
 
     ax_barras.tick_params(axis="y", labelsize=9)
@@ -431,9 +429,9 @@ def dashboard_02_total_por_unidade() -> None:
     resumo.sort_values("total", ascending=False, inplace=True)
 
     n_lojas: int = len(resumo)
-    cores: list[str] = (
-        SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1)
-    )[:n_lojas]
+    cores: list[str] = (SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1))[
+        :n_lojas
+    ]
 
     # --- Figura: três painéis lado a lado ----------------------------------
     fig, (ax_fat, ax_ped, ax_ticket) = plt.subplots(1, 3, figsize=(20, 7))
@@ -447,7 +445,6 @@ def dashboard_02_total_por_unidade() -> None:
     )
 
     def _barras_h(
-
         ax: plt.Axes,  # type: ignore
         valores: pd.Series,
         rotulos: pd.Series,
@@ -456,8 +453,9 @@ def dashboard_02_total_por_unidade() -> None:
         label_fmt: str,
     ) -> None:
         """Desenha barras horizontais padronizadas num eixo."""
-        barras = ax.barh(rotulos, valores, color=cores,
-                         edgecolor="white", linewidth=0.8)
+        barras = ax.barh(
+            rotulos, valores, color=cores, edgecolor="white", linewidth=0.8
+        )
         for barra, valor in zip(barras, valores):
             ax.text(
                 barra.get_width() * 1.01,
@@ -466,10 +464,11 @@ def dashboard_02_total_por_unidade() -> None:
                 va="center",
                 ha="left",
                 fontsize=8,
-                color=PALETA["texto"]
+                color=PALETA["texto"],
             )
-        ax.set_title(titulo, fontsize=11, fontweight="bold",
-                     color=PALETA["texto"], pad=10)
+        ax.set_title(
+            titulo, fontsize=11, fontweight="bold", color=PALETA["texto"], pad=10
+        )
         ax.invert_yaxis()
         ax.xaxis.set_major_formatter(formatter)
         ax.tick_params(axis="y", labelsize=9)
@@ -483,7 +482,8 @@ def dashboard_02_total_por_unidade() -> None:
         rotulos=resumo["loja"],
         titulo="Faturamento Total (R$)",
         formatter=plt.FuncFormatter(  # pyright: ignore[reportPrivateImportUsage]
-            lambda x, _: f"R$ {x/1_000_000:.1f}M"),
+            lambda x, _: f"R$ {x / 1_000_000:.1f}M"
+        ),
         label_fmt="R$ {:,.0f}",
     )
     _barras_h(
@@ -500,7 +500,8 @@ def dashboard_02_total_por_unidade() -> None:
         rotulos=resumo["loja"],
         titulo="Ticket Médio (R$)",
         formatter=plt.FuncFormatter(  # pyright: ignore[reportPrivateImportUsage]
-            lambda x, _: f"R$ {x:,.0f}"),
+            lambda x, _: f"R$ {x:,.0f}"
+        ),
         label_fmt="R$ {:.2f}",
     )
 
@@ -547,16 +548,12 @@ def dashboard_03_top_vendedores() -> None:
     df = df_vendas.merge(
         df_equipe[["id_funcionario", "vendedor", "cargo"]],
         on="id_funcionario",
-        how="left"
+        how="left",
     )
 
     # Agrega por loja + vendedor
-    resumo = (
-        df.groupby(["loja_nome", "vendedor"], as_index=False)
-        .agg(
-            faturamento=("subtotal", "sum"),
-            pedidos=("id_pedido", "nunique")
-        )
+    resumo = df.groupby(["loja_nome", "vendedor"], as_index=False).agg(
+        faturamento=("subtotal", "sum"), pedidos=("id_pedido", "nunique")
     )
 
     lojas: list[str] = sorted(resumo["loja_nome"].unique())
@@ -610,11 +607,11 @@ def dashboard_03_top_vendedores() -> None:
                 color=PALETA["texto"],
             )
 
-        ax.set_title(loja, fontsize=11, fontweight="bold",
-                     color=PALETA["texto"], pad=8)
+        ax.set_title(loja, fontsize=11, fontweight="bold", color=PALETA["texto"], pad=8)
         ax.xaxis.set_major_formatter(
             plt.FuncFormatter(  # pyright: ignore[reportPrivateImportUsage]
-                lambda x, _: f"R$ {x/1_000:.0f}K")
+                lambda x, _: f"R$ {x / 1_000:.0f}K"
+            )
         )
         ax.tick_params(axis="y", labelsize=8.5)
         ax.grid(axis="x", linestyle="--", alpha=0.4)
@@ -681,8 +678,20 @@ def dashboard_04_faturamento_mensal() -> None:
     mensal["liquido"] = mensal["bruto"] - mensal["cancelado"]
 
     # Rótulo de período para o eixo X: "Jan/23", "Fev/23" ...
-    meses_abrev = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
-                   "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    meses_abrev = [
+        "Jan",
+        "Fev",
+        "Mar",
+        "Abr",
+        "Mai",
+        "Jun",
+        "Jul",
+        "Ago",
+        "Set",
+        "Out",
+        "Nov",
+        "Dez",
+    ]
     mensal["periodo"] = mensal.apply(
         lambda r: f"{meses_abrev[int(r['mes']) - 1]}/{str(int(r['ano']))[2:]}",
         axis=1,
@@ -710,12 +719,13 @@ def dashboard_04_faturamento_mensal() -> None:
     ax2.set_ylabel("Cancelamentos (R$)", color=PALETA["alerta"], fontsize=10)
     ax2.tick_params(axis="y", labelcolor=PALETA["alerta"])
     ax2.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda y, _: f"R$ {y/1_000:.0f}K")  # type: ignore
+        plt.FuncFormatter(lambda y, _: f"R$ {y / 1_000:.0f}K")  # type: ignore
     )
 
     # Linhas de faturamento (eixo esquerdo — frente)
     ax1.plot(
-        x, mensal["bruto"],
+        x,
+        mensal["bruto"],
         color=PALETA["primaria"],
         linewidth=2.5,
         marker="o",
@@ -724,7 +734,8 @@ def dashboard_04_faturamento_mensal() -> None:
         zorder=3,
     )
     ax1.plot(
-        x, mensal["liquido"],
+        x,
+        mensal["liquido"],
         color=PALETA["secundaria"],
         linewidth=2,
         marker="o",
@@ -737,7 +748,8 @@ def dashboard_04_faturamento_mensal() -> None:
     ax1.set_ylabel("Faturamento (R$)", color=PALETA["texto"], fontsize=10)
     ax1.yaxis.set_major_formatter(
         plt.FuncFormatter(  # type: ignore
-            lambda y, _: f"R$ {y/1_000_000:.1f}M")
+            lambda y, _: f"R$ {y / 1_000_000:.1f}M"
+        )
     )
     ax1.tick_params(axis="y", labelcolor=PALETA["neutro"])
     ax1.set_xticks(list(x))
@@ -811,9 +823,7 @@ def dashboard_05_faturamento_por_categoria() -> None:
     )
 
     total_geral: float = categorias["total"].sum()
-    categorias["pct_acum"] = (
-        categorias["total"].cumsum() / total_geral * 100
-    )
+    categorias["pct_acum"] = categorias["total"].cumsum() / total_geral * 100
 
     n: int = len(categorias)
     cores = [PALETA["primaria"]] * n
@@ -845,11 +855,13 @@ def dashboard_05_faturamento_por_categoria() -> None:
     )
 
     # Rótulos nas barras
-    for i, (valor, cat) in enumerate(zip(categorias["total"], categorias["categoria_pai"])):
+    for i, (valor, cat) in enumerate(
+        zip(categorias["total"], categorias["categoria_pai"])
+    ):
         ax1.text(
             i,
             valor * 1.01,
-            f"R$ {valor/1_000_000:.1f}M",
+            f"R$ {valor / 1_000_000:.1f}M",
             ha="center",
             va="bottom",
             fontsize=7.5,
@@ -882,7 +894,8 @@ def dashboard_05_faturamento_por_categoria() -> None:
     ax1.set_ylabel("Faturamento (R$)", color=PALETA["texto"], fontsize=10)
     ax1.yaxis.set_major_formatter(
         plt.FuncFormatter(  # type: ignore
-            lambda y, _: f"R$ {y/1_000_000:.1f}M")
+            lambda y, _: f"R$ {y / 1_000_000:.1f}M"
+        )
     )
     ax1.set_xticks(list(x))
     ax1.set_xticklabels(
@@ -907,7 +920,7 @@ def dashboard_05_faturamento_por_categoria() -> None:
     linhas2, labels2 = ax2.get_legend_handles_labels()
     legenda_extra = [
         Patch(color=PALETA["secundaria"], label="Top 80% do faturamento"),
-        Patch(color=PALETA["primaria"],   label="Demais categorias"),
+        Patch(color=PALETA["primaria"], label="Demais categorias"),
     ]
     ax1.legend(
         legenda_extra + linhas2,
@@ -1008,7 +1021,7 @@ def dashboard_06_produtos_ticket_medio() -> None:
         ax1.text(
             i,
             valor * 1.01,
-            f"R$ {valor/1_000:.0f}K",
+            f"R$ {valor / 1_000:.0f}K",
             ha="center",
             va="bottom",
             fontsize=7,
@@ -1041,8 +1054,9 @@ def dashboard_06_produtos_ticket_medio() -> None:
     # Configurações eixo esquerdo
     ax1.set_ylabel("Faturamento (R$)", color=PALETA["texto"], fontsize=10)
     ax1.yaxis.set_major_formatter(
-        plt.FuncFormatter( # type: ignore
-            lambda y, _: f"R$ {y/1_000_000:.1f}M")
+        plt.FuncFormatter(  # type: ignore
+            lambda y, _: f"R$ {y / 1_000_000:.1f}M"
+        )
     )
     ax1.set_xticks(list(x))
     ax1.set_xticklabels(
@@ -1066,7 +1080,7 @@ def dashboard_06_produtos_ticket_medio() -> None:
     linhas2, labels2 = ax2.get_legend_handles_labels()
     legenda_extra = [
         Patch(color=PALETA["secundaria"], label="Ticket acima da média"),
-        Patch(color=PALETA["primaria"],   label="Ticket abaixo da média"),
+        Patch(color=PALETA["primaria"], label="Ticket abaixo da média"),
     ]
     ax1.legend(
         legenda_extra + linhas2,
@@ -1093,6 +1107,7 @@ def dashboard_06_produtos_ticket_medio() -> None:
         n,
         f"{media_ticket:,.0f}",
     )
+
 
 # ---------------------------------------------------------------------------
 # Dashboard 07 — Análise RFM de clientes
@@ -1155,24 +1170,47 @@ def dashboard_07_rfm() -> None:
     )
 
     # Scores por quartis
-    quartis = rfm[["recencia", "frequencia", "valor"]
-                  ].quantile([0.25, 0.5, 0.75])
+    quartis = rfm[["recencia", "frequencia", "valor"]].quantile([0.25, 0.5, 0.75])
 
     rfm["R"] = rfm["recencia"].apply(
-        lambda x: 4 if x <= quartis.loc[0.25, "recencia"] else  # type: ignore
-        3 if x <= quartis.loc[0.50, "recencia"] else  # type: ignore
-        2 if x <= quartis.loc[0.75, "recencia"] else 1  # type: ignore
+        lambda x: (
+            4
+            if x <= quartis.loc[0.25, "recencia"]
+            # type: ignore
+            else 3
+            if x <= quartis.loc[0.50, "recencia"]
+            # type: ignore
+            else 2
+            if x <= quartis.loc[0.75, "recencia"]
+            else 1
+        )  # type: ignore
     )
     rfm["F"] = rfm["frequencia"].apply(
         # type: ignore
-        lambda x: 1 if x <= quartis.loc[0.25, "frequencia"] else # type: ignore
-        2 if x <= quartis.loc[0.50, "frequencia"] else  # type: ignore
-        3 if x <= quartis.loc[0.75, "frequencia"] else 4  # type: ignore
+        lambda x: (
+            1
+            if x <= quartis.loc[0.25, "frequencia"]
+            # type: ignore
+            else 2
+            if x <= quartis.loc[0.50, "frequencia"]
+            # type: ignore
+            else 3
+            if x <= quartis.loc[0.75, "frequencia"]
+            else 4
+        )  # type: ignore
     )
     rfm["M"] = rfm["valor"].apply(
-        lambda x: 1 if x <= quartis.loc[0.25, "valor"] else  # type: ignore
-        2 if x <= quartis.loc[0.50, "valor"] else  # type: ignore
-        3 if x <= quartis.loc[0.75, "valor"] else 4  # type: ignore
+        lambda x: (
+            1
+            if x <= quartis.loc[0.25, "valor"]
+            # type: ignore
+            else 2
+            if x <= quartis.loc[0.50, "valor"]
+            # type: ignore
+            else 3
+            if x <= quartis.loc[0.75, "valor"]
+            else 4
+        )  # type: ignore
     )
 
     # --- Figura 1: Scatter ------------------------------------------------
@@ -1239,10 +1277,8 @@ def dashboard_07_rfm() -> None:
         color=PALETA["texto"],
         pad=12,
     )
-    ax2.set_xlabel("Frequência (1=baixo, 4=alto)",
-                   fontsize=10, color=PALETA["texto"])
-    ax2.set_ylabel("Recência (1=antigo, 4=recente)",
-                   fontsize=10, color=PALETA["texto"])
+    ax2.set_xlabel("Frequência (1=baixo, 4=alto)", fontsize=10, color=PALETA["texto"])
+    ax2.set_ylabel("Recência (1=antigo, 4=recente)", fontsize=10, color=PALETA["texto"])
 
     plt.tight_layout()
     salvar_figura(fig_heatmap, "d07_rfm_heatmap")
@@ -1278,7 +1314,6 @@ def main() -> None:
         dashboard_05_faturamento_por_categoria,
         dashboard_06_produtos_ticket_medio,
         dashboard_07_rfm,
-
     ]
 
     total = len(dashboards)
@@ -1303,5 +1338,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-
     main()

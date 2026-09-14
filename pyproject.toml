@@ -13,12 +13,10 @@ dependencies = [
     "mysql-connector-python (==8.4.0)",
     "matplotlib (>=3.10.8,<4.0.0)",
     "seaborn (>=0.13.2,<0.14.0)",
+    "plotly (>=6.6.0,<7.0.0)",
+    "scikit-learn (>=1.6.0,<2.0.0)",
     "python-dotenv (>=1.0.0)"
 ]
-
-# Plotly é usado apenas na Fase 2 (dashboards interativos) — instalação opcional.
-[project.optional-dependencies]
-interativo = ["plotly (>=6.6.0,<7.0.0)"]
 
 [tool.poetry]
 packages = [{include = "tecmente", from = "src"}]
@@ -27,6 +25,27 @@ packages = [{include = "tecmente", from = "src"}]
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^7.2.0"
 pytest = "^8.0.0"
+ruff = "^0.8.0"
+
+[tool.ruff]
+# Padrão de estilo baseado no ruff format
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# E = erros de estilo, F = erros (simples), I = ordenação de imports
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Catálogo de dados (produtos/endereços): linhas longas são intencionais
+# para legibilidade das tabelas em uma linha cada.
+"gerador_mestre.py" = ["E501"]
+# Exemplos de comandos de agendamento longos no docstring (Windows/cron).
+"pipeline.py" = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

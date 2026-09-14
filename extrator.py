@@ -78,7 +78,7 @@ from config import DB_CONFIG, ENCODING
 
 # Pasta raiz onde as subpastas de extração serão criadas — relativa ao script.
 RAIZ_PROJETO: Path = Path(__file__).parent
-PASTA_SAIDA: Path = RAIZ_PROJETO / 'data'
+PASTA_SAIDA: Path = RAIZ_PROJETO / "data"
 
 # =============================================================================
 # CONFIGURAÇÃO DE LOG
@@ -94,17 +94,15 @@ def configurar_log(pasta: str) -> logging.Logger:
     Returns:
         Instância do logger configurada.
     """
-    logger = logging.getLogger('extrator')
+    logger = logging.getLogger("extrator")
     logger.setLevel(logging.DEBUG)
 
     fmt = logging.Formatter(
-        '%(asctime)s %(levelname)-8s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
+        "%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    fh = logging.FileHandler(
-        os.path.join(pasta, 'extracao.log'), encoding='utf-8'
-    )
+    fh = logging.FileHandler(os.path.join(pasta, "extracao.log"), encoding="utf-8")
 
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
@@ -117,6 +115,7 @@ def configurar_log(pasta: str) -> logging.Logger:
     logger.addHandler(ch)
 
     return logger
+
 
 # =============================================================================
 # HELPER — executa query e grava CSV
@@ -163,7 +162,7 @@ def _executar_e_gravar(
         return 0
 
     try:
-        with open(caminho, 'w', newline='', encoding=ENCODING) as f:
+        with open(caminho, "w", newline="", encoding=ENCODING) as f:
             writer = csv.writer(f)
             writer.writerow(colunas)
             writer.writerows(rows)
@@ -173,8 +172,7 @@ def _executar_e_gravar(
         return 0
 
     elapsed = time.time() - inicio
-    logger.info(
-        f"  {nome_arquivo:<25} {len(rows):>8,} linhas ({elapsed:.1f}s)")
+    logger.info(f"  {nome_arquivo:<25} {len(rows):>8,} linhas ({elapsed:.1f}s)")
 
     return len(rows)
 
@@ -182,6 +180,7 @@ def _executar_e_gravar(
 # =============================================================================
 # QUERIES — dados brutos, sem cálculos
 # =============================================================================
+
 
 def extrair_vendas(
     cur,
@@ -247,9 +246,11 @@ def extrair_vendas(
         ORDER BY pe.data_pedido, pe.id_pedido, pi.id_item
     """
     return _executar_e_gravar(
-        cur, query,
-        os.path.join(pasta, 'vendas.csv'),
-        logger, 'vendas.csv',
+        cur,
+        query,
+        os.path.join(pasta, "vendas.csv"),
+        logger,
+        "vendas.csv",
         params=params,
     )
 
@@ -301,9 +302,11 @@ def extrair_produtos_estoque(
         ORDER BY cat.nome_pai, cat.nome, p.nome, l.nome
     """
     return _executar_e_gravar(
-        cur, query,
-        os.path.join(pasta, 'produtos_estoque.csv'),
-        logger, 'produtos_estoque.csv',
+        cur,
+        query,
+        os.path.join(pasta, "produtos_estoque.csv"),
+        logger,
+        "produtos_estoque.csv",
     )
 
 
@@ -344,9 +347,11 @@ def extrair_clientes(
         ORDER BY data_cadastro, id_cliente
     """
     return _executar_e_gravar(
-        cur, query,
-        os.path.join(pasta, 'clientes.csv'),
-        logger, 'clientes.csv',
+        cur,
+        query,
+        os.path.join(pasta, "clientes.csv"),
+        logger,
+        "clientes.csv",
     )
 
 
@@ -392,15 +397,18 @@ def extrair_equipe_lojas(
         ORDER BY l.nome, d.nome, f.nome
     """
     return _executar_e_gravar(
-        cur, query,
-        os.path.join(pasta, 'equipe_lojas.csv'),
-        logger, 'equipe_lojas.csv',
+        cur,
+        query,
+        os.path.join(pasta, "equipe_lojas.csv"),
+        logger,
+        "equipe_lojas.csv",
     )
 
 
 # =============================================================================
 # MAIN
 # =============================================================================
+
 
 def main() -> None:
     """
@@ -427,22 +435,26 @@ def main() -> None:
     # Argumentos
     # ─────────────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
-        description='Extração semanal de dados brutos - TecMente (DBA)'
+        description="Extração semanal de dados brutos - TecMente (DBA)"
     )
     parser.add_argument(
-        '--dias', type=int, default=None,
-        help='Extrai apenas os últimos N dias (padrão: histórico completo).'
+        "--dias",
+        type=int,
+        default=None,
+        help="Extrai apenas os últimos N dias (padrão: histórico completo).",
     )
     parser.add_argument(
-        '--saida', type=str, default=str(PASTA_SAIDA),
-        help=f'Pasta raiz de saída (padrão: {PASTA_SAIDA}).'
+        "--saida",
+        type=str,
+        default=str(PASTA_SAIDA),
+        help=f"Pasta raiz de saída (padrão: {PASTA_SAIDA}).",
     )
     args = parser.parse_args()
 
     # ─────────────────────────────────────────────────────────────
     # Preparação
     # ─────────────────────────────────────────────────────────────
-    hoje = datetime.now().strftime('%Y-%m-%d')
+    hoje = datetime.now().strftime("%Y-%m-%d")
     pasta_execucao = os.path.join(args.saida, hoje)
     os.makedirs(pasta_execucao, exist_ok=True)
 
@@ -456,9 +468,7 @@ def main() -> None:
 
     data_inicio = None
     if args.dias:
-        data_inicio = (
-            datetime.now() - timedelta(days=args.dias)
-        ).strftime('%Y-%m-%d')
+        data_inicio = (datetime.now() - timedelta(days=args.dias)).strftime("%Y-%m-%d")
         logger.info(f"Período        : últimos {args.dias} dias (desde {data_inicio})")
     else:
         logger.info("Período        : histórico completo")
@@ -485,10 +495,14 @@ def main() -> None:
 
         # Definição das extrações
         extracoes = [
-            ('vendas', extrair_vendas, (cur, pasta_execucao, logger, data_inicio)),
-            ('produtos_estoque', extrair_produtos_estoque, (cur, pasta_execucao, logger)),
-            ('clientes', extrair_clientes, (cur, pasta_execucao, logger)),
-            ('equipe_lojas', extrair_equipe_lojas, (cur, pasta_execucao, logger)),
+            ("vendas", extrair_vendas, (cur, pasta_execucao, logger, data_inicio)),
+            (
+                "produtos_estoque",
+                extrair_produtos_estoque,
+                (cur, pasta_execucao, logger),
+            ),
+            ("clientes", extrair_clientes, (cur, pasta_execucao, logger)),
+            ("equipe_lojas", extrair_equipe_lojas, (cur, pasta_execucao, logger)),
         ]
 
         # Execução das etapas
@@ -509,9 +523,15 @@ def main() -> None:
         logger.info("RESUMO")
         logger.info("-" * 60)
         logger.info(f"  vendas.csv             : {totais.get('vendas', 0):>8,} linhas")
-        logger.info(f"  produtos_estoque.csv   : {totais.get('produtos_estoque', 0):>8,} linhas")
-        logger.info(f"  clientes.csv           : {totais.get('clientes', 0):>8,} linhas")
-        logger.info(f"  equipe_lojas.csv       : {totais.get('equipe_lojas', 0):>8,} linhas")
+        logger.info(
+            f"  produtos_estoque.csv   : {totais.get('produtos_estoque', 0):>8,} linhas"
+        )
+        logger.info(
+            f"  clientes.csv           : {totais.get('clientes', 0):>8,} linhas"
+        )
+        logger.info(
+            f"  equipe_lojas.csv       : {totais.get('equipe_lojas', 0):>8,} linhas"
+        )
         logger.info(f"  Total                  : {sum(totais.values()):>8,} linhas")
         logger.info(f"  Tempo total            : {elapsed_total:.1f}s")
         logger.info(f"  Etapas com erro        : {len(erros)}")
@@ -549,5 +569,6 @@ def main() -> None:
 
         logger.info("Conexão fechada.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

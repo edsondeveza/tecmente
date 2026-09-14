@@ -8,7 +8,6 @@ Executar com:
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from tratador import (
     corrigir_email,
@@ -17,10 +16,10 @@ from tratador import (
     normalizar_cpf_cnpj,
 )
 
-
 # =============================================================================
 # mascarar_cpf_cnpj
 # =============================================================================
+
 
 class TestMascararCpfCnpj:
     def test_formato_pontuado(self) -> None:
@@ -45,6 +44,7 @@ class TestMascararCpfCnpj:
 # mascarar_email
 # =============================================================================
 
+
 class TestMascararEmail:
     def test_email_normal(self) -> None:
         assert mascarar_email("joao.silva@gmail.com") == "j***@gmail.com"
@@ -64,6 +64,7 @@ class TestMascararEmail:
 # normalizar_cpf_cnpj
 # =============================================================================
 
+
 class TestNormalizarCpfCnpj:
     def test_pontuado(self) -> None:
         assert normalizar_cpf_cnpj("123.456.789-00") == "12345678900"
@@ -81,6 +82,7 @@ class TestNormalizarCpfCnpj:
 # =============================================================================
 # corrigir_email
 # =============================================================================
+
 
 class TestCorrigirEmail:
     def test_typo_con_para_com(self) -> None:

@@ -26,7 +26,9 @@ A **TecMente** é uma empresa fictícia de e-commerce de informática criada exc
 | Geração de dados       | Faker                  |
 | Conexão com banco      | mysql-connector-python |
 | Visualização (Fase 1)  | matplotlib, seaborn    |
-| Visualização (Fase 2)  | Plotly (planejado)     |
+| Visualização (Fase 2)  | Plotly                  |
+| Machine Learning       | scikit-learn            |
+| Automação do fluxo     | pipeline.py (subprocess) |
 
 ---
 
@@ -37,7 +39,10 @@ tecmente/
 ├── gerador_mestre.py             ← popula o banco completo
 ├── extrator.py                   ← extração semanal de dados brutos (DBA)
 ├── tratador.py                   ← tratamento dos dados brutos (Analista)
-├── visualizador.py               ← geração de dashboards e gráficos (BI)
+├── visualizador.py               ← gráficos estáticos (BI)
+├── visualizador_interativo.py    ← dashboards interativos Plotly
+├── previsor.py                   ← previsão de vendas (scikit-learn)
+├── pipeline.py                   ← orquestra todo o fluxo automaticamente
 ├── pyproject.toml                ← dependências do Poetry
 ├── sql/
 │   └── tecmente_schema.sql    ← schema do banco (DBA executa primeiro)
@@ -50,8 +55,9 @@ tecmente/
 │       ├── equipe_lojas_tratado.csv
 │       └── relatorio_qualidade.txt
 └── output/
-    ├── graficos/                 ← PNGs gerados pelo visualizador.py
-    └── relatorios/               ← HTML interativo (Fase 2 — Plotly)
+    ├── graficos/                 ← PNGs (visualizador.py) e HTML de previsão
+    ├── relatorios/               ← HTML interativo (visualizador_interativo.py)
+    └── predicoes/                ← CSV e relatório do previsor.py
 ```
 
 > **Nota:** o `visualizador.py` encontra automaticamente a pasta `_tratado`
@@ -72,7 +78,14 @@ extrator.py
 tratador.py
         ↓ Analista trata e entrega ao BI → data/AAAA-MM-DD_tratado/
 visualizador.py
-        ↓ BI gera dashboards → output/graficos/
+        ↓ BI gera gráficos estáticos → output/graficos/
+visualizador_interativo.py
+        ↓ BI gera dashboards Plotly → output/relatorios/
+previsor.py (opcional)
+        ↓ DS projeta vendas → output/predicoes/
+
+# Orquestração automática de todo o fluxo:
+pipeline.py --prever
 ```
 
 ---
@@ -182,8 +195,20 @@ poetry run python tratador.py
 # Tratamento de uma data específica
 poetry run python tratador.py --data 2026-03-17
 
-# Geração dos dashboards
+# Geração dos dashboards estáticos
 poetry run python visualizador.py
+
+# Geração dos dashboards interativos (Plotly)
+poetry run python visualizador_interativo.py
+
+# Previsão de vendas (Random Forest — 14 dias)
+poetry run python previsor.py
+
+# Pipeline completo de ponta a ponta (com previsão)
+poetry run python pipeline.py --prever
+
+# Tudo, limitando a extração aos últimos 7 dias
+poetry run python pipeline.py --dias 7 --prever
 ```
 
 ---
@@ -258,6 +283,44 @@ Dashboards gerados (Fase 1 — Matplotlib/Seaborn):
 | `d07_rfm_heatmap.png`               | Heatmap RFM — valor total por segmento R × F      |
 
 **Status v2.0:** Todos os 7 dashboards implementados e validados. ✅
+
+### `visualizador_interativo.py`
+
+Versão interativa (Plotly) do mesmo conjunto de dashboards, gerando **HTML** que abre no navegador (`output/relatorios/*.html`). Usa os mesmos dados tratados/views, com tooltips, filtros e responsividade.
+
+Dashboards gerados (Fase 2 — Plotly):
+
+| Arquivo                                        | Descrição                                       |
+| ---------------------------------------------- | ----------------------------------------------- |
+| `d01_faturamento_por_loja.html`                | Participação % + valor absoluto por loja        |
+| `d02_total_por_unidade.html`                   | Faturamento, pedidos e ticket médio por unidade |
+| `d03_top_vendedores.html`                      | Top vendedores por loja                         |
+| `d04_faturamento_mensal.html`                  | Bruto, líquido e cancelamentos por mês          |
+| `d05_faturamento_por_categoria.html`           | Faturamento por categoria + Pareto              |
+| `d06_produtos_ticket_medio.html`               | Top produtos por receita e ticket médio         |
+| `d07_rfm_scatter.html` / `d07_rfm_heatmap.html` | Análise RFM de clientes                         |
+
+**Status v1.0:** Tipagens do Pylance reforçadas (casts + `reset_index()`), dashboards validados. ✅
+
+### `previsor.py`
+
+Previsão de vendas com **Random Forest** (scikit-learn). Agrega a receita diária, constrói features de calendário (dia da semana, mês, semana do ano) e defasagens (lag 1/7/14), treina o modelo e projeta **14 dias** à frente de forma recursiva.
+
+Saídas em `output/predicoes/`: CSV com a previsão (`previsao_vendas.csv`), relatório (`relatorio_previsao.txt`) e gráfico HTML (`previsao_vendas.html`).
+
+**Status v1.0:** Treino/teste com métricas MAE, RMSE e MAPE; funções testadas isoladamente. ✅
+
+### `pipeline.py`
+
+Orquestra todas as etapas via `subprocess` em sequência: extração → tratamento → dashboards estáticos → dashboards interativos → (opcional) previsão. Interrompe e reporta falha caso uma etapa retorne código de saída ≠ 0.
+
+**Agendamento** (Task Scheduler do Windows):
+
+```bat
+schtasks /create /tn "TecMente_Pipeline" /tr "C:\estudos\tecmente\.venv\Scripts\python.exe C:\estudos\tecmente\pipeline.py --prever" /sc daily /st 06:00
+```
+
+**Status v1.0:** Execução de ponta a ponta validada (extração → previsão). ✅
 
 ---
 
@@ -360,14 +423,16 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 
 ## Status do pipeline
 
-| Etapa               | Script                   | Status       | Validado em |
-| ------------------- | ------------------------ | ------------ | ----------- |
-| Schema do banco     | `tecmente_schema.sql`    | ✅ Concluído | 2026-04-13  |
-| Geração de dados    | `gerador_mestre.py`      | ✅ Concluído | 2026-04-13  |
-| Extração DBA        | `extrator.py`            | ✅ Concluído | 2026-04-13 |
-| Tratamento Analista | `tratador.py`            | ✅ Concluído | 2026-04-13 |
-| Entrega ao BI       | `visualizador.py`        | ✅ Concluído | 2026-04-13 |
-
+| Etapa               | Script                          | Status          | Validado em |
+| ------------------- | ------------------------------- | --------------- | ----------- |
+| Schema do banco     | `tecmente_schema.sql`           | ✅ Concluído     | 2026-04-13  |
+| Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-04-13  |
+| Extração DBA        | `extrator.py`                   | ✅ Concluído     | 2026-04-13 |
+| Tratamento Analista | `tratador.py`                   | ✅ Concluído     | 2026-04-13 |
+| Entrega ao BI       | `visualizador.py`               | ✅ Concluído     | 2026-04-13 |
+| Dashboards Plotly   | `visualizador_interativo.py`    | ✅ Concluído     | 2026-09-14 |
+| Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-14 |
+| Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-14 |
 
 ---
 
@@ -377,10 +442,11 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 
 - [x] Entrega ao BI — Python (matplotlib / seaborn)
 - [x] Visualizações estáticas — 7 dashboards em PNG
-- [ ] Visualizações interativas — Plotly (Fase 2)
+- [x] Visualizações interativas — Plotly (7 dashboards HTML)
+- [x] Análise preditiva de vendas — Random Forest (14 dias)
+- [x] Automatização do fluxo — `pipeline.py` + agendamento (Task Scheduler / cron)
 - [ ] Power BI — após conclusão da formação Daxus
-- [ ] Análise preditiva de vendas (Machine Learning)
-- [ ] Automatização da extração via agendamento (Task Scheduler / cron)
+- [x] CI — GitHub Actions (ruff + pytest) via workflow em `.github/`
 
 ---
 
