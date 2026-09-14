@@ -149,7 +149,8 @@ O `gerador_mestre.py` gera dados com **ruído realista intencional** para exerci
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/seu-usuario/tecmente.git
+git clone https://github.com/edsondeveza/tecmente.git
+
 cd tecmente
 
 # 2. Instale as dependências
