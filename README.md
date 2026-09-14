@@ -156,6 +156,26 @@ O `gerador_mestre.py` gera dados com **ruído realista intencional** para exerci
 - Distribuição de Pareto: 20% dos produtos respondem por ~60% das vendas
 - Clientes segmentados: 8% super-ativos, 22% inativos, 70% normais
 
+### Catálogo de ruído
+
+Todas as taxas de ruído são controláveis por constantes no topo de `gerador_mestre.py` (bloco `RUIDO_*`). Ajuste-as para gerar bases mais ou menos sujas. Valores-padrão:
+
+| Constante | Taxa | O que gera | Onde |
+|---|---|---|---|
+| `RUIDO_EMAIL_TYPO` | 3% | E-mail com domínio `.con` (erro de digitação) | `cliente.email` |
+| `RUIDO_SEM_TELEFONE` | 8% | Telefone `NULL` (não informado) | `cliente.telefone` |
+| `RUIDO_TELEFONE_VAZIO` | 2% | Telefone `""` (vazio ≠ NULL) | `cliente.telefone` |
+| `RUIDO_EMAIL_FAMILIA` | 4% | E-mail familiar compartilhado (intencional) | `cliente.email` |
+| `RUIDO_SEM_SOBRENOME` | 2% | Cliente sem sobrenome | `cliente.sobrenome` |
+| `RUIDO_SEM_NASCIMENTO` | 12% | Sem data de nascimento | `cliente.data_nascimento` |
+| `RUIDO_DESCONTINUADO` | 6% | Produto inativo (`ativo=0`) | `produto.ativo` |
+| `RUIDO_CLIENTE_DUP` | 2% | Cliente com CPF/e-mail duplicado (treino de dedup) | `cliente.cpf_cnpj` |
+| `RUIDO_ESPACO` | 2% | Espaços irregulares em nomes/cidades | `cliente.nome` / `cliente.cidade` |
+| `RUIDO_OBS` | 5% | Observação de texto livre no pedido | `pedido.obs` |
+| `RUIDO_PEDIDO_ANTES_CADASTRO` | 2% | Pedido anterior ao cadastro do cliente | `pedido.data_pedido` |
+
+> **Datas:** pedidos ocorrem, em sua maioria, **após** o cadastro do cliente (o cadastro é datado antes do início da janela de pedidos). A taxa acima planta ~2% de pedidos anteriores ao cadastro como anomalia **controlada** para detecção — e não um viés em 100% dos registros.
+
 ---
 
 ## Instalação

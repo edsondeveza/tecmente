@@ -79,6 +79,25 @@ SAZONALIDADE: dict[int, float] = {
     12: 1.50,  # Dezembro  – Natal
 }
 
+# ─────────────────────────────────────────────────────────────────────────
+# CATÁLOGO DE RUÍDO (taxas controladas)
+# Cada taxa abaixo injeta propositalmente um problema de qualidade de dados
+# para praticar normalização. Os valores-padrão reproduzem o comportamento
+# atual do gerador; as taxas novas ampliam o leque de cenários. Este bloco é
+# a fonte de verdade — espelha a tabela "Catálogo de ruído" no README.
+# ─────────────────────────────────────────────────────────────────────────
+RUIDO_EMAIL_TYPO = 0.03  # ~3% e-mails com domínio .con (erro de digitação)
+RUIDO_SEM_TELEFONE = 0.08  # ~8% clientes sem telefone (NULL)
+RUIDO_TELEFONE_VAZIO = 0.02  # ~2% clientes com telefone "" (vazio vs NULL)
+RUIDO_EMAIL_FAMILIA = 0.04  # ~4% PF com e-mail familiar compartilhado
+RUIDO_SEM_SOBRENOME = 0.02  # ~2% PF sem sobrenome cadastrado
+RUIDO_SEM_NASCIMENTO = 0.12  # ~12% clientes sem data de nascimento
+RUIDO_DESCONTINUADO = 0.06  # ~6% produtos inativos (ativo=0)
+RUIDO_CLIENTE_DUP = 0.02  # ~2% clientes com CPF/e-mail duplicados (dedup)
+RUIDO_ESPACO = 0.02  # ~2% nomes/sobrenomes/cidades com espaços irregulares
+RUIDO_OBS = 0.05  # ~5% pedidos com observação de texto livre
+RUIDO_PEDIDO_ANTES_CADASTRO = 0.02  # ~2% pedidos anteriores ao cadastro do cliente
+
 
 # Catálogo de produtos embutido: (SKU, nome, preço_venda, categoria_hierarquica)
 # Formato categoria: "Pai > Filho" — igual ao CSV gerado anteriormente.
@@ -1006,8 +1025,8 @@ def _email(nome: str, sobrenome: str = "", pj: bool = False) -> str:
         ]
     )
 
-    # ~3% de chance de erro de digitação no domínio
-    if random.random() < 0.03:
+    # Erro de digitação no domínio (taxa controlada)
+    if random.random() < RUIDO_EMAIL_TYPO:
         dom = dom.replace(".com", ".con")
 
     return f"{base}@{dom}"
@@ -1038,14 +1057,18 @@ def _doc(pj: bool = False) -> str:
 def _fone() -> str | None:
     """Gera um número de telefone celular com variações de formato.
 
-    Cerca de 8% dos registros não possuem telefone (``None``), simulando
-    clientes que não informaram o dado no cadastro.
+    Cerca de 8% dos registros não possuem telefone (``None``) e outros ~2%
+    possuem telefone vazio (``""`` — diferente de NULL), para praticar a
+    distinção entre vazio e ausente.
 
     Returns:
-        String com o telefone formatado, ou ``None`` se não informado.
+        String com o telefone formatado, ``None`` (não informado ou ``""`` vazio).
     """
-    if random.random() < 0.08:
-        return None  # 8% dos clientes sem telefone cadastrado
+    r = random.random()
+    if r < RUIDO_SEM_TELEFONE:
+        return None
+    if r < RUIDO_SEM_TELEFONE + RUIDO_TELEFONE_VAZIO:
+        return ""
 
     ddd = random.choice(["11", "13", "21", "31", "41", "47", "51", "61", "71"])
     num = f"9{random.randint(1000, 9999)}-{random.randint(1000, 9999)}"
@@ -1057,6 +1080,28 @@ def _fone() -> str | None:
             f"+55{ddd}{num.replace('-', '')}",  # +5511912345678
         ]
     )
+
+
+def _ruido_espaco(s: str) -> str:
+    """Insere espaços irregulares em uma string com determinada probabilidade.
+
+    Simula bases legadas com espaços à esquerda/direita ou duplos espaços
+    internos, exigindo normalização de whitespace no tratamento.
+
+    Args:
+        s: String original (nome, sobrenome, cidade etc.).
+
+    Returns:
+        A string com ruído de espaços caso sorteado, ou inalterada.
+    """
+    if random.random() >= RUIDO_ESPACO:
+        return s
+    if random.random() < 0.5:
+        return f" {s}"
+    if random.random() < 0.6:
+        return f"{s} "
+    # duplo espaço interno no primeiro espaço simples
+    return s if " " not in s else re.sub(r" ", "  ", s, count=1)
 
 
 def _ticket(preco: float) -> str:
@@ -2131,7 +2176,7 @@ def popular_funcionarios(cur, loja_ids: list[int]) -> dict[int, list[int]]:
     return vend
 
 
-def popular_clientes(cur) -> tuple[list[int], list[int]]:
+def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
     """Gera clientes PF e PJ com dados sintéticos e ruído realista.
 
     Aplica as seguintes regras de ruído para simular qualidade de dados real:
@@ -2147,22 +2192,34 @@ def popular_clientes(cur) -> tuple[list[int], list[int]]:
         cur: Cursor MySQL ativo.
 
     Returns:
-        Tupla ``(pf_ids, pj_ids)`` com os IDs sequenciais dos clientes
-        gerados, separados por tipo. Usados na segmentação de pedidos.
+        Tupla ``(pf_ids, pj_ids, recentes)`` com os IDs dos clientes gerados
+        por tipo e o conjunto de clientes recentes (pool de anomalia temporal).
+        Usados na segmentação e no ruído de datas dos pedidos.
     """
     clientes = []
 
     # Pool de e-mails compartilhados para simular compras em família
     emails_familia = [_email(fake.first_name(), fake.last_name()) for _ in range(80)]
 
+    cpf_gerados: set[str] = set()
+
     for i in range(NUM_CLIENTES):
         pj = random.random() < PROPORCAO_PJ
         tipo = "PJ" if pj else "PF"
-        cidade, estado = fake.city(), fake.state_abbr()
-        cadastro = fake.date_between(start_date="-730d", end_date="today")
+        cidade, estado = (fake.city(), fake.state_abbr())
+
+        # Cadastro alinhado aos pedidos: a maioria se registra ANTES da janela
+        # de pedidos (DATA_INICIO), então as compras seguem o cadastro. Uma
+        # fração recente forma o pool de anomalia temporal (ver popular_pedidos
+        # / RUIDO_PEDIDO_ANTES_CADASTRO).
+        if random.random() < 0.03:
+            cadastro = fake.date_between(start_date="-90d", end_date="today")
+        else:
+            cadastro = DATA_INICIO - timedelta(days=random.randint(0, 300))
+
         nasc = (
             None
-            if random.random() < 0.12
+            if random.random() < RUIDO_SEM_NASCIMENTO
             else fake.date_between(start_date="-70y", end_date="-18y")
         )
 
@@ -2172,15 +2229,27 @@ def popular_clientes(cur) -> tuple[list[int], list[int]]:
             email = _email(re.sub(r"[^a-z]", "", nome.lower())[:10], pj=True)
         else:
             nome = fake.first_name()
-            sob = fake.last_name() if random.random() > 0.02 else None
+            sob = fake.last_name() if random.random() > RUIDO_SEM_SOBRENOME else None
             email = (
                 random.choice(emails_familia)
-                if random.random() < 0.04
+                if random.random() < RUIDO_EMAIL_FAMILIA
                 else _email(nome, sob or "")
             )
 
+        # Espaços irregulares (whitespace para normalizar no tratamento)
+        nome = _ruido_espaco(nome)
+        sob = _ruido_espaco(sob) if sob else None
+        cidade = _ruido_espaco(cidade)
+
+        # Dedup: ~2% reutilizam um CPF/e-mail já gerado (alvo de deduplicação)
+        doc = _doc(pj)
+        if random.random() < RUIDO_CLIENTE_DUP and cpf_gerados:
+            doc = random.choice(list(cpf_gerados))
+        else:
+            cpf_gerados.add(doc)
+
         clientes.append(
-            (nome, sob, tipo, email, _fone(), _doc(pj), nasc, cadastro, cidade, estado)
+            (nome, sob, tipo, email, _fone(), doc, nasc, cadastro, cidade, estado)
         )
 
     for i in range(0, len(clientes), 500):
@@ -2191,14 +2260,17 @@ def popular_clientes(cur) -> tuple[list[int], list[int]]:
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             clientes[i : i + 500],
         )
-    # Busca os IDs REAIS do banco após o INSERT
-    cur.execute("SELECT id_cliente FROM cliente WHERE tipo = 'PF'")
-    pf_ids = [r[0] for r in cur.fetchall()]
+    # Busca os IDs REAIS do banco após o INSERT (com tipo e cadastro)
+    cur.execute("SELECT id_cliente, tipo, data_cadastro FROM cliente")
+    todas = cur.fetchall()
+    pf_ids = [r[0] for r in todas if r[1] == "PF"]
+    pj_ids = [r[0] for r in todas if r[1] == "PJ"]
+    # Pool de anomalia temporal: clientes registrados nos últimos 90 dias.
+    # Recebem pedidos anteriores ao cadastro via RUIDO_PEDIDO_ANTES_CADASTRO.
+    recente_limiar = datetime.now() - timedelta(days=90)
+    recentes = {r[0] for r in todas if r[2] >= recente_limiar}
 
-    cur.execute("SELECT id_cliente FROM cliente WHERE tipo = 'PJ'")
-    pj_ids = [r[0] for r in cur.fetchall()]
-
-    return pf_ids, pj_ids
+    return pf_ids, pj_ids, recentes
 
 
 def popular_pedidos(
@@ -2208,6 +2280,7 @@ def popular_pedidos(
     vend_por_loja: dict[int, list[int]],
     pf_ids: list[int],
     pj_ids: list[int],
+    recentes: set[int],
 ) -> None:
     """Gera pedidos e itens simulando comportamento realista de compra.
 
@@ -2230,19 +2303,23 @@ def popular_pedidos(
         vend_por_loja: Dicionário ``{id_loja: [id_funcionario, ...]}``.
         pf_ids:        IDs de clientes Pessoa Física.
         pj_ids:        IDs de clientes Pessoa Jurídica.
+        recentes:      IDs de clientes recentes (pool de anomalia temporal).
     """
     cur.execute("SELECT id_loja, tipo FROM loja")
     lojas = cur.fetchall()
 
     todos = pf_ids + pj_ids
-    super_ativos = set(random.sample(todos, int(NUM_CLIENTES * 0.08)))
+    # Clientes recentes ficam fora do fluxo normal de vendas: são usados apenas
+    # na anomalia temporal (RUIDO_PEDIDO_ANTES_CADASTRO), mantendo a taxa ~2% controlada.
+    pool = [c for c in todos if c not in recentes]
+    super_ativos = set(random.sample(pool, int(NUM_CLIENTES * 0.08)))
     inativos = set(
         random.sample(
-            [c for c in todos if c not in super_ativos],
+            [c for c in pool if c not in super_ativos],
             int(NUM_CLIENTES * 0.22),
         )
     )
-    normais = [c for c in todos if c not in super_ativos and c not in inativos]
+    normais = [c for c in pool if c not in super_ativos and c not in inativos]
 
     # Índice de produtos agrupados por faixa para seleção eficiente
     por_ticket: dict[str, list[tuple[int, float]]] = {
@@ -2257,18 +2334,28 @@ def popular_pedidos(
     gerados = 0
     ped_buf: list[tuple] = []
     item_buf: list[list[tuple]] = []
+    textos_obs = [
+        "Entrega em horário comercial",
+        "Cliente preferencial",
+        "Sem contato telefônico",
+    ]
 
     while gerados < NUM_PEDIDOS:
-        # Seleciona cliente com base no perfil comportamental
-        r = random.random()
-        if r < 0.40 and super_ativos:
-            id_cli = random.choice(list(super_ativos))
-        elif r < 0.43 and inativos:
-            id_cli = random.choice(list(inativos))
-        elif normais:
-            id_cli = random.choice(normais)
+        # Anomalia temporal controlada: ~2% dos pedidos vão para clientes
+        # registrados recentemente, fazendo o pedido preceder o cadastro.
+        if random.random() < RUIDO_PEDIDO_ANTES_CADASTRO and recentes:
+            id_cli = random.choice(list(recentes))
         else:
-            continue
+            # Seleciona cliente com base no perfil comportamental
+            r = random.random()
+            if r < 0.40 and super_ativos:
+                id_cli = random.choice(list(super_ativos))
+            elif r < 0.43 and inativos:
+                id_cli = random.choice(list(inativos))
+            elif normais:
+                id_cli = random.choice(normais)
+            else:
+                continue
 
         pj = id_cli in pj_ids
 
@@ -2281,11 +2368,16 @@ def popular_pedidos(
 
         # Seleciona loja e canal de venda
         id_loja, tipo_loja = random.choice(lojas)
-        id_func = random.choice(vend_por_loja.get(id_loja, [None]))
         canal = (
             "Loja Física"
             if tipo_loja == "Física"
             else random.choice(["Site", "Marketplace", "WhatsApp", "Televendas"])
+        )
+        # Só pedidos de loja física têm atendente; online → id_funcionario NULL.
+        id_func = (
+            random.choice(vend_por_loja.get(id_loja, [None]))
+            if canal == "Loja Física"
+            else None
         )
 
         # Compõe itens do pedido com preferência por produtos populares
@@ -2329,7 +2421,9 @@ def popular_pedidos(
                 preco_unit = round(preco_tab * random.uniform(0.97, 1.02), 2)
 
             total += qtd * preco_unit
-            itens.append((id_prod, qtd, preco_unit, custo))
+            # Desconto declarado por item (percentual sobre o preço de tabela)
+            desconto_item = round(max(0.0, 1 - preco_unit / preco_tab), 2)
+            itens.append((id_prod, qtd, preco_unit, custo, desconto_item))
 
         if not itens:
             continue
@@ -2346,8 +2440,19 @@ def popular_pedidos(
         # PJ pode receber desconto global de até 5% no valor do pedido
         desconto = round(total * random.uniform(0, 0.05), 2) if pj else 0.0
 
+        obs = random.choice(textos_obs) if random.random() < RUIDO_OBS else None
         ped_buf.append(
-            (id_cli, id_loja, id_func, data, status, canal, round(total, 2), desconto)
+            (
+                id_cli,
+                id_loja,
+                id_func,
+                data,
+                status,
+                canal,
+                round(total, 2),
+                desconto,
+                obs,
+            )
         )
         item_buf.append(itens)
         gerados += 1
@@ -2450,11 +2555,11 @@ def main() -> None:
         conn.commit()
 
         log.info("Populando clientes...")
-        pf_ids, pj_ids = popular_clientes(cur)
+        pf_ids, pj_ids, recentes = popular_clientes(cur)
         conn.commit()
 
         log.info("Gerando %d pedidos...", NUM_PEDIDOS)
-        popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids)
+        popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids, recentes)
         conn.commit()
 
         log.info("=" * 55)
