@@ -230,8 +230,10 @@ def extrair_vendas(
             pi.id_item,
             pi.id_produto,
             pi.quantidade,
-            p.preco_venda,
-            p.preco_custo,
+            # Valores efetivos registrados no pedido — o preco_unitario já embute
+            # o desconto por volume (7–18% PJ / ±3% PF); custo_unitario é o custo real.
+            pi.preco_unitario AS preco_venda,
+            pi.custo_unitario AS preco_custo,
             p.sku,
             p.nome         AS produto_nome,
             cat.id_categoria,
