@@ -16,7 +16,19 @@ __pycache__/
 # VS Code / IDEs
 .vscode/
 .idea/
+
+# Ambiente / Segredos
+.env
 .claude
+
+# Artefatos gerados pelo pipeline
+data/
+output/
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
 
 
 

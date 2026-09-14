@@ -11,7 +11,7 @@ descrições são gerados internamente a partir de templates por categoria.
 
 Pré-requisitos
 --------------
-- MySQL 8.0+ com o schema criado via ``tecmente_schema_v2.sql``
+- MySQL 8.0+ com o schema criado via ``tecmente_schema.sql``
 - Dependências: ``mysql-connector-python``, ``faker``
 
 Uso
@@ -33,24 +33,26 @@ Versão: 1.1
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
 
 import mysql.connector
 from faker import Faker
 
+from config import DB_CONFIG
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
 # =============================================================================
 # CONFIGURAÇÕES
 # =============================================================================
-
-DB_CONFIG: Dict[str, str] = {
-    'host':     'localhost',
-    'user':     'root',
-    'password': '',  # ← altere antes de executar
-    'database': 'tecmente',
-}
 
 fake = Faker('pt_BR')
 # random.seed(42)  # remova para dados diferentes a cada execução
@@ -62,7 +64,7 @@ DATA_INICIO         = datetime.now() - timedelta(days=1825)  # 5 anos de histór
 # Multiplicadores de volume de vendas por mês.
 # Valores > 1.0 representam alta temporada; < 1.0, baixa temporada.
 # Referência: Black Friday (nov=1.80), volta às aulas (jan=1.30), Natal (dez=1.50).
-SAZONALIDADE: Dict[int, float] = {
+SAZONALIDADE: dict[int, float] = {
     1: 1.30,   # Janeiro   – volta às aulas
     2: 1.20,   # Fevereiro – volta às aulas
     3: 0.85,   # Março
@@ -81,7 +83,7 @@ SAZONALIDADE: Dict[int, float] = {
 # Catálogo de produtos embutido: (SKU, nome, preço_venda, categoria_hierarquica)
 # Formato categoria: "Pai > Filho" — igual ao CSV gerado anteriormente.
 # Adicione, remova ou edite produtos aqui conforme necessário.
-PRODUTOS_BASE: List[Tuple[str, str, float, str]] = [
+PRODUTOS_BASE: list[tuple[str, str, float, str]] = [
     # ── Hardware > Placas de Vídeo ────────────────────────────────────────────
     ('258109', 'Placa de Vídeo 4GB RX550 Star DDR5 AMD',                    84.99,   'Hardware > Placas de Vídeo'),
     ('256659', 'Placa de Vídeo 2GB GT610 Keepdata DDR3 64Bits HDMI/DVI/VGA', 196.99,  'Hardware > Placas de Vídeo'),
@@ -262,7 +264,7 @@ PRODUTOS_BASE: List[Tuple[str, str, float, str]] = [
 ]
 
 # Lojas da rede: (nome, tipo, cidade, estado)
-LOJAS: List[Tuple[str, str, str, str]] = [
+LOJAS: list[tuple[str, str, str, str]] = [
     ('CD Osasco',          'Online', 'Osasco',        'SP'),
     ('Loja Paulista',      'Física', 'São Paulo',      'SP'),
     ('Loja Santo André',   'Física', 'Santo André',    'SP'),
@@ -271,12 +273,12 @@ LOJAS: List[Tuple[str, str, str, str]] = [
     ('Escritório Central', 'Online', 'São Paulo',      'SP'),
 ]
 
-DEPARTAMENTOS: List[str] = [
+DEPARTAMENTOS: list[str] = [
     'Vendas', 'TI', 'Logística', 'Financeiro', 'RH', 'Marketing', 'Suporte Técnico',
 ]
 
 # Domínios usados na geração de e-mails de clientes PF.
-DOMINIOS: List[str] = [
+DOMINIOS: list[str] = [
     'gmail.com', 'hotmail.com', 'yahoo.com.br', 'outlook.com',
     'uol.com.br', 'bol.com.br', 'terra.com.br', 'ig.com.br',
 ]
@@ -345,7 +347,7 @@ def _doc(pj: bool = False) -> str:
     return re.sub(r'[.\-/]', '_', raw)           # separadores trocados: 000_000_000_00
 
 
-def _fone() -> Optional[str]:
+def _fone() -> str | None:
     """Gera um número de telefone celular com variações de formato.
 
     Cerca de 8% dos registros não possuem telefone (``None``), simulando
@@ -393,7 +395,7 @@ def _ticket(preco: float) -> str:
 
 
 # Sobrenomes brasileiros usados na composição de razões sociais PJ.
-_SOBRENOMES_PJ: List[str] = [
+_SOBRENOMES_PJ: list[str] = [
     'Almeida', 'Andrade', 'Araújo', 'Barbosa', 'Borges', 'Camargo', 'Cardoso',
     'Carvalho', 'Castro', 'Correia', 'Costa', 'Cruz', 'Cunha', 'Dias', 'Duarte',
     'Farias', 'Fernandes', 'Ferreira', 'Fonseca', 'Freitas', 'Garcia', 'Gomes',
@@ -404,11 +406,11 @@ _SOBRENOMES_PJ: List[str] = [
     'Silveira', 'Soares', 'Souza', 'Teixeira', 'Vargas', 'Vasconcelos', 'Vieira',
 ]
 
-_SUFIXOS_PJ: List[str] = [
+_SUFIXOS_PJ: list[str] = [
     'Ltda.', 'S.A.', 'S/A', 'ME', 'EPP', 'EIRELI', 'S/S', 'EI',
 ]
 
-_SEGMENTOS_PJ: List[str] = [
+_SEGMENTOS_PJ: list[str] = [
     'Comércio', 'Distribuidora', 'Tecnologia', 'Soluções', 'Serviços',
     'Informática', 'Sistemas', 'Consultoria', 'Importadora', 'Atacado',
 ]
@@ -463,7 +465,7 @@ def _razao_social() -> str:
 # combinados aleatoriamente para montar a descrição do produto.
 # =============================================================================
 
-TEMPLATES: Dict[str, Dict] = {
+TEMPLATES: dict[str, dict] = {
 
     'Hardware > Placas de Video': {
         'interface':  ['PCIe 4.0 x16', 'PCIe 3.0 x16', 'PCIe 4.0 x8'],
@@ -790,7 +792,7 @@ TEMPLATES: Dict[str, Dict] = {
 }
 
 # Fallback para categorias sem template definido
-TEMPLATE_GENERICO: Dict = {
+TEMPLATE_GENERICO: dict = {
     'tipo':  ['componente para informatica', 'acessorio para informatica', 'produto de TI'],
     'extra': ['instalacao simples', 'compatibilidade ampla', 'plug-and-play'],
     'template': '{nome}. {tipo}. {extra}.',
@@ -819,7 +821,7 @@ def gerar_descricao(nome: str, categoria: str) -> str:
     template = dados['template']
 
     # Monta dicionario de substituicoes com valores aleatorios por chave
-    substituicoes: Dict[str, str] = {'nome': nome}
+    substituicoes: dict[str, str] = {'nome': nome}
     for chave, valores in dados.items():
         if chave == 'template':
             continue
@@ -870,7 +872,7 @@ def limpar(cur) -> None:
     cur.execute("SET FOREIGN_KEY_CHECKS=1")
 
 
-def popular_base(cur) -> Tuple[List[int], List[int]]:
+def popular_base(cur) -> tuple[list[int], list[int]]:
     """Popula as tabelas dimensionais: lojas, departamentos e fornecedores.
 
     Insere os dados mestres estáticos definidos nas constantes ``LOJAS`` e
@@ -950,7 +952,7 @@ def popular_base(cur) -> Tuple[List[int], List[int]]:
     return loja_ids, forn_ids
 
 
-def popular_produtos(cur, forn_ids: List[int]) -> Tuple[List[Tuple[int, float]], Set[int]]:
+def popular_produtos(cur, forn_ids: list[int]) -> tuple[list[tuple[int, float]], set[int]]:
     """Insere categorias e produtos no banco a partir do catálogo embutido ``PRODUTOS_BASE``.
 
     Não depende de nenhum arquivo externo. Para cada produto:
@@ -973,7 +975,7 @@ def popular_produtos(cur, forn_ids: List[int]) -> Tuple[List[Tuple[int, float]],
         - ``populares`` : conjunto de IDs de produtos com alta demanda
     """
     # Extrai categorias únicas do catálogo e insere no banco
-    cats: Dict[str, Tuple[str, str]] = {}
+    cats: dict[str, tuple[str, str]] = {}
     for _, _, _, cat_raw in PRODUTOS_BASE:
         if ' > ' in cat_raw:
             pai, filho = cat_raw.split(' > ', 1)
@@ -1000,7 +1002,7 @@ def popular_produtos(cur, forn_ids: List[int]) -> Tuple[List[Tuple[int, float]],
         descricao = gerar_descricao(nome, cat_raw)
         produtos_db.append((sku, nome, descricao, custo, preco, id_cat, random.choice(forn_ids)))
 
-    print(f"  {len(produtos_db)} produtos carregados do catálogo interno.")
+    log.info("%d produtos carregados do catálogo interno.", len(produtos_db))
 
     # Inserção em lotes de 500
     for i in range(0, len(produtos_db), 500):
@@ -1016,7 +1018,7 @@ def popular_produtos(cur, forn_ids: List[int]) -> Tuple[List[Tuple[int, float]],
 
     # Distribuição de Pareto: 20% mais baratos + amostra dos mais caros
     ordenados = sorted(prods, key=lambda x: x[1])
-    populares: Set[int] = {p[0] for p in ordenados[:int(len(ordenados) * 0.20)]}
+    populares: set[int] = {p[0] for p in ordenados[:int(len(ordenados) * 0.20)]}
     populares |= {p[0] for p in random.sample(ordenados[-100:], min(50, len(ordenados)))}
 
     return prods, populares
@@ -1024,9 +1026,9 @@ def popular_produtos(cur, forn_ids: List[int]) -> Tuple[List[Tuple[int, float]],
 
 def popular_estoque(
     cur,
-    prods: List[Tuple[int, float]],
-    populares: Set[int],
-    loja_ids: List[int],
+    prods: list[tuple[int, float]],
+    populares: set[int],
+    loja_ids: list[int],
 ) -> None:
     """Gera os registros de estoque para cada combinação produto × loja.
 
@@ -1062,7 +1064,7 @@ def popular_estoque(
         )
 
 
-def popular_funcionarios(cur, loja_ids: List[int]) -> Dict[int, List[int]]:
+def popular_funcionarios(cur, loja_ids: list[int]) -> dict[int, list[int]]:
     """Gera funcionários e os distribui pelas lojas e departamentos.
 
     Lojas físicas recebem 10 funcionários do departamento de Vendas;
@@ -1125,14 +1127,14 @@ def popular_funcionarios(cur, loja_ids: List[int]) -> Dict[int, List[int]]:
 
     # Monta índice de funcionários por loja para uso na geração de pedidos
     cur.execute("SELECT id_funcionario, id_loja FROM funcionario")
-    vend: Dict[int, List[int]] = {}
+    vend: dict[int, list[int]] = {}
     for id_func, id_loja in cur.fetchall():
         vend.setdefault(id_loja, []).append(id_func)
 
     return vend
 
 
-def popular_clientes(cur) -> Tuple[List[int], List[int]]:
+def popular_clientes(cur) -> tuple[list[int], list[int]]:
     """Gera clientes PF e PJ com dados sintéticos e ruído realista.
 
     Aplica as seguintes regras de ruído para simular qualidade de dados real:
@@ -1151,7 +1153,7 @@ def popular_clientes(cur) -> Tuple[List[int], List[int]]:
         Tupla ``(pf_ids, pj_ids)`` com os IDs sequenciais dos clientes
         gerados, separados por tipo. Usados na segmentação de pedidos.
     """
-    clientes, pf_ids, pj_ids = [], [], []
+    clientes = []
 
     # Pool de e-mails compartilhados para simular compras em família
     emails_familia = [
@@ -1182,12 +1184,6 @@ def popular_clientes(cur) -> Tuple[List[int], List[int]]:
 
         clientes.append((nome, sob, tipo, email, _fone(), _doc(pj), nasc, cadastro, cidade, estado))
 
-        # IDs são sequenciais a partir de 1 (AUTO_INCREMENT do banco)
-        if pj:
-            pj_ids.append(i + 1)
-        else:
-            pf_ids.append(i + 1)
-
     for i in range(0, len(clientes), 500):
         cur.executemany(
             "INSERT INTO cliente "
@@ -1196,7 +1192,7 @@ def popular_clientes(cur) -> Tuple[List[int], List[int]]:
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             clientes[i:i + 500],
         )
-    # NOVO: Em vez de usar i+1, pegamos os IDs REAIS do banco de dados
+    # Busca os IDs REAIS do banco após o INSERT
     cur.execute("SELECT id_cliente FROM cliente WHERE tipo = 'PF'")
     pf_ids = [r[0] for r in cur.fetchall()]
 
@@ -1208,11 +1204,11 @@ def popular_clientes(cur) -> Tuple[List[int], List[int]]:
 
 def popular_pedidos(
     cur,
-    prods: List[Tuple[int, float]],
-    populares: Set[int],
-    vend_por_loja: Dict[int, List[int]],
-    pf_ids: List[int],
-    pj_ids: List[int],
+    prods: list[tuple[int, float]],
+    populares: set[int],
+    vend_por_loja: dict[int, list[int]],
+    pf_ids: list[int],
+    pj_ids: list[int],
 ) -> None:
     """Gera pedidos e itens simulando comportamento realista de compra.
 
@@ -1248,15 +1244,15 @@ def popular_pedidos(
     normais = [c for c in todos if c not in super_ativos and c not in inativos]
 
     # Índice de produtos agrupados por faixa para seleção eficiente
-    por_ticket: Dict[str, List[Tuple[int, float]]] = {
+    por_ticket: dict[str, list[tuple[int, float]]] = {
         'LOW': [], 'MID': [], 'HIGH': [], 'ULTRA': [],
     }
     for pid, preco in prods:
         por_ticket[_ticket(preco)].append((pid, preco))
 
     gerados = 0
-    ped_buf: List[tuple] = []
-    item_buf: List[List[tuple]] = []
+    ped_buf: list[tuple] = []
+    item_buf: list[list[tuple]] = []
 
     while gerados < NUM_PEDIDOS:
 
@@ -1296,7 +1292,7 @@ def popular_pedidos(
             k=n_itens,
         )
 
-        itens: List[tuple] = []
+        itens: list[tuple] = []
         total = 0.0
 
         for tk in tickets:
@@ -1358,16 +1354,16 @@ def popular_pedidos(
             item_buf.clear()
 
         if gerados % 5000 == 0:
-            print(f"  {gerados}/{NUM_PEDIDOS} pedidos gerados...")
+            log.info("%d/%d pedidos gerados...", gerados, NUM_PEDIDOS)
 
     # Flush do buffer residual
     if ped_buf:
         _flush(cur, ped_buf, item_buf)
 
-    print(f"✓ {gerados} pedidos gerados.")
+    log.info("%d pedidos gerados.", gerados)
 
 
-def _flush(cur, peds: List[tuple], items: List[List[tuple]]) -> None:
+def _flush(cur, peds: list[tuple], items: list[list[tuple]]) -> None:
     """Persiste um lote de pedidos e seus respectivos itens no banco.
 
     Insere os pedidos um a um para capturar os ``lastrowid`` gerados,
@@ -1379,7 +1375,7 @@ def _flush(cur, peds: List[tuple], items: List[List[tuple]]) -> None:
         items: Lista de listas de tuplas com os itens de cada pedido.
                O índice deve corresponder ao índice em ``peds``.
     """
-    pedido_ids: List[int] = []
+    pedido_ids: list[int] = []
 
     for ped in peds:
         cur.execute(
@@ -1418,56 +1414,55 @@ def main() -> None:
     caso de falha: se a geração de pedidos falhar, os dados base já estarão
     persistidos e podem ser inspecionados diretamente no banco.
     """
-    print("\n" + "=" * 55)
-    print("  TecMente  — Gerador Mestre v1.1")
-    print("=" * 55 + "\n")
+    log.info("=" * 55)
+    log.info("TecMente — Gerador Mestre v1.1")
+    log.info("=" * 55)
 
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cur = conn.cursor(buffered=True)
 
-        print("Limpando tabelas...")
+        log.info("Limpando tabelas...")
         limpar(cur)
         conn.commit()
 
-        print("Populando base (lojas, departamentos, fornecedores)...")
+        log.info("Populando base (lojas, departamentos, fornecedores)...")
         loja_ids, forn_ids = popular_base(cur)
         conn.commit()
 
-        print("Populando produtos e categorias...")
+        log.info("Populando produtos e categorias...")
         prods, populares = popular_produtos(cur, forn_ids)
         conn.commit()
 
-        print("Populando estoque...")
+        log.info("Populando estoque...")
         popular_estoque(cur, prods, populares, loja_ids)
         conn.commit()
 
-        print("Populando funcionários...")
+        log.info("Populando funcionários...")
         vend = popular_funcionarios(cur, loja_ids)
         conn.commit()
 
-        print("Populando clientes...")
+        log.info("Populando clientes...")
         pf_ids, pj_ids = popular_clientes(cur)
         conn.commit()
 
-        print(f"Gerando {NUM_PEDIDOS} pedidos...")
+        log.info("Gerando %d pedidos...", NUM_PEDIDOS)
         popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids)
         conn.commit()
 
-        print("\n" + "=" * 55)
-        print("  ✅ Banco populado com sucesso!")
-        print("=" * 55)
-        print(f"\n  Produtos  : {len(prods)}")
-        print(f"  Clientes  : {NUM_CLIENTES} (PF + PJ)")
-        print(f"  Pedidos   : {NUM_PEDIDOS}")
-        print(f"  Populares : {len(populares)} produtos")
-        print("\n  Views disponíveis:")
-        print("    vw_faturamento_mensal | vw_ranking_produtos")
-        print("    vw_rfm | vw_vendas_canal | vw_categorias\n")
+        log.info("=" * 55)
+        log.info("Banco populado com sucesso!")
+        log.info("=" * 55)
+        log.info("Produtos  : %d", len(prods))
+        log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
+        log.info("Pedidos   : %d", NUM_PEDIDOS)
+        log.info("Populares : %d produtos", len(populares))
+        log.info("Views disponíveis: vw_faturamento_mensal | vw_ranking_produtos")
+        log.info("                    vw_rfm | vw_vendas_canal | vw_categorias")
 
     except mysql.connector.Error as e:
-        print(f"\n❌ Erro MySQL: {e}")
+        log.error("Erro MySQL: %s", e)
         if conn and conn.is_connected():
             conn.rollback()
 
@@ -1475,7 +1470,7 @@ def main() -> None:
         if conn and conn.is_connected():
             cur.close()
             conn.close()
-            print("Conexão fechada.")
+            log.info("Conexão fechada.")
 
 
 if __name__ == '__main__':

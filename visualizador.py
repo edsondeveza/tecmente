@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 from datetime import timedelta
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import pandas as pd
 import seaborn as sns
+
+from config import DB_CONFIG, ENCODING
 
 # ---------------------------------------------------------------------------
 # Configuração de logging
@@ -62,18 +64,9 @@ FONTE: str = "csv"
 # Diretório raiz dos dados — relativo ao próprio script
 CAMINHO_BASE: Path = Path(__file__).parent / "data"
 
-# Diretórios de saída
-CAMINHO_GRAFICOS: Path = Path("output/graficos")
-CAMINHO_RELATORIOS: Path = Path("output/relatorios")
-
-# Credenciais do banco (usadas apenas quando FONTE = "sql")
-DB_CONFIG: dict[str, str | int] = {
-    "host": "localhost",
-    "port": 3306,
-    "database": "tecmente",
-    "user": "root",
-    "password": "",
-}
+# Diretórios de saída — relativos ao diretório do script
+CAMINHO_GRAFICOS: Path = Path(__file__).parent / "output" / "graficos"
+CAMINHO_RELATORIOS: Path = Path(__file__).parent / "output" / "relatorios"
 
 # ---------------------------------------------------------------------------
 # Paleta de cores TecMente
@@ -129,16 +122,13 @@ def resolver_caminho_dados(base: Path) -> Path:
 
     pastas = sorted(base.glob("*_tratado"), reverse=True)
     if not pastas:
-        raise FileExistsError(
+        raise FileNotFoundError(
             f"Nenhuma pasta '_tratado' encontrada em: {base}"
         )
     escolhida = pastas[0]
     log.info("Pasta de dados resolvida: %s", escolhida)
     return escolhida
 
-
-# Resolvido em tempo de execução — sempre aponta para a extração mais recente
-CAMINHO_DADOS: Path = resolver_caminho_dados(CAMINHO_BASE)
 
 # ---------------------------------------------------------------------------
 # Estilo global do Matplotlib
@@ -198,7 +188,7 @@ def salvar_figura(fig: plt.Figure, nome_arquivo: str) -> None:  # type: ignore
 
 def carregar_dados(
     nome_csv: str,
-    query_sql: Optional[str] = None,
+    query_sql: str | None = None,
 ) -> pd.DataFrame:
     """Carrega dados da fonte configurada em FONTE.
 
@@ -219,11 +209,13 @@ def carregar_dados(
     """
 
     if FONTE == "csv":
-        caminho = CAMINHO_DADOS / nome_csv
+        # Resolvido aqui (lazy) — evitando efeito colateral no import.
+        pasta_dados = resolver_caminho_dados(CAMINHO_BASE)
+        caminho = pasta_dados / nome_csv
         if not caminho.exists():
             raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
         log.info("Lendo CSV: %s", caminho)
-        return pd.read_csv(caminho, sep=",", encoding="utf-8-sig")
+        return pd.read_csv(caminho, sep=",", encoding=ENCODING)
 
     if FONTE == "sql":
         if not query_sql:
@@ -233,7 +225,7 @@ def carregar_dados(
         except ImportError as exc:
             raise ImportError(
                 "mysql-connector-python não instalado. "
-                "Execulte: poetry add mysql-connector-python"
+                "Execute: poetry add mysql-connector-python"
             ) from exc
         log.info("Consultando banco de dados...")
         conn = mysql.connector.connect(**DB_CONFIG)
@@ -722,7 +714,6 @@ def dashboard_04_faturamento_mensal() -> None:
     )
 
     # Linhas de faturamento (eixo esquerdo — frente)
-    # Linhas de faturamento (eixo esquerdo — frente)
     ax1.plot(
         x, mensal["bruto"],
         color=PALETA["primaria"],
@@ -914,7 +905,6 @@ def dashboard_05_faturamento_por_categoria() -> None:
 
     # Legenda unificada
     linhas2, labels2 = ax2.get_legend_handles_labels()
-    from matplotlib.patches import Patch
     legenda_extra = [
         Patch(color=PALETA["secundaria"], label="Top 80% do faturamento"),
         Patch(color=PALETA["primaria"],   label="Demais categorias"),
@@ -1073,7 +1063,6 @@ def dashboard_06_produtos_ticket_medio() -> None:
     ax2.tick_params(axis="y", labelcolor=PALETA["destaque"])
 
     # Legenda unificada
-    from matplotlib.patches import Patch
     linhas2, labels2 = ax2.get_legend_handles_labels()
     legenda_extra = [
         Patch(color=PALETA["secundaria"], label="Ticket acima da média"),
@@ -1309,7 +1298,7 @@ def main() -> None:
     if erros:
         log.warning("Concluído com erros em: %s", ",".join(erros))
     else:
-        log.info("Todos oa dashboards concluídos com sucesso.")
+        log.info("Todos os dashboards concluídos com sucesso.")
     log.info("Gráficos em: %s", CAMINHO_GRAFICOS.resolve())
 
 

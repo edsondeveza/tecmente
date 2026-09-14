@@ -37,7 +37,7 @@ tecmente/
 ├── gerador_mestre.py             ← popula o banco completo
 ├── extrator.py                   ← extração semanal de dados brutos (DBA)
 ├── tratador.py                   ← tratamento dos dados brutos (Analista)
-├── vizualizador.py               ← geração de dashboards e gráficos (BI)
+├── visualizador.py               ← geração de dashboards e gráficos (BI)
 ├── pyproject.toml                ← dependências do Poetry
 ├── sql/
 │   └── tecmente_schema.sql    ← schema do banco (DBA executa primeiro)
@@ -50,11 +50,11 @@ tecmente/
 │       ├── equipe_lojas_tratado.csv
 │       └── relatorio_qualidade.txt
 └── output/
-    ├── graficos/                 ← PNGs gerados pelo vizualizador.py
+    ├── graficos/                 ← PNGs gerados pelo visualizador.py
     └── relatorios/               ← HTML interativo (Fase 2 — Plotly)
 ```
 
-> **Nota:** o `vizualizador.py` encontra automaticamente a pasta `_tratado`
+> **Nota:** o `visualizador.py` encontra automaticamente a pasta `_tratado`
 > mais recente dentro de `data/`. Não é necessário alterar nenhum caminho
 > no código entre execuções semanais.
 
@@ -71,7 +71,7 @@ extrator.py
         ↓ DBA extrai dados brutos semanalmente → data/AAAA-MM-DD/
 tratador.py
         ↓ Analista trata e entrega ao BI → data/AAAA-MM-DD_tratado/
-vizualizador.py
+visualizador.py
         ↓ BI gera dashboards → output/graficos/
 ```
 
@@ -96,7 +96,7 @@ vizualizador.py
 ### Time de BI
 
 - Recebe os dados tratados e confiáveis
-- Gera dashboards e relatórios via `vizualizador.py`
+- Gera dashboards e relatórios via `visualizador.py`
 - Não se preocupa com origem ou qualidade dos dados
 
 ---
@@ -114,8 +114,8 @@ vizualizador.py
 | `produto`      | 154 produtos com descrição por template  |
 | `estoque`      | Quantidade por produto por loja          |
 | `funcionario`  | 80 funcionários distribuídos nas lojas   |
-| `cliente`      | 1.500 clientes PF e PJ                   |
-| `pedido`       | 35.000 pedidos com sazonalidade e canais |
+| `cliente`      | 3.500 clientes PF e PJ                   |
+| `pedido`       | 50.000 pedidos com sazonalidade e canais |
 | `pedido_item`  | Itens de cada pedido                     |
 
 ### Views analíticas
@@ -156,7 +156,7 @@ cd tecmente
 poetry install
 
 # 3. Crie o banco de dados
-# Execute tecmente_schema_v2.sql no Azure Data Studio ou HeidiSQL
+# Execute tecmente_schema.sql no Azure Data Studio ou HeidiSQL
 
 # 4. Configure a senha do banco nos scripts
 # Edite DB_CONFIG em cada script Python
@@ -183,7 +183,7 @@ poetry run python tratador.py
 poetry run python tratador.py --data 2026-03-17
 
 # Geração dos dashboards
-poetry run python vizualizador.py
+poetry run python visualizador.py
 ```
 
 ---
@@ -238,7 +238,7 @@ Tratamento de erros por tipo no `main()`:
 
 **Status v1.0:** Pré-requisitos na docstring corrigidos. ✅
 
-### `vizualizador.py`
+### `visualizador.py`
 
 Responsabilidade do time de BI. Lê os CSVs tratados (ou consulta as views do banco via chaveamento `FONTE = "csv" | "sql"`) e gera os dashboards em PNG.
 
@@ -362,11 +362,11 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 
 | Etapa               | Script                   | Status       | Validado em |
 | ------------------- | ------------------------ | ------------ | ----------- |
-| Schema do banco     | `tecmente_schema_v2.sql` | ✅ Concluído | 2026-04-13  |
+| Schema do banco     | `tecmente_schema.sql`    | ✅ Concluído | 2026-04-13  |
 | Geração de dados    | `gerador_mestre.py`      | ✅ Concluído | 2026-04-13  |
 | Extração DBA        | `extrator.py`            | ✅ Concluído | 2026-04-13 |
 | Tratamento Analista | `tratador.py`            | ✅ Concluído | 2026-04-13 |
-| Entrega ao BI       | `vizualizador.py`        | ✅ Concluído | 2026-04-13 |
+| Entrega ao BI       | `visualizador.py`        | ✅ Concluído | 2026-04-13 |
 
 
 ---

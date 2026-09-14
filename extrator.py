@@ -66,26 +66,19 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from pathlib import Path
 
 import mysql.connector
+
+from config import DB_CONFIG, ENCODING
 
 # =============================================================================
 # CONFIGURAÇÕES
 # =============================================================================
 
-DB_CONFIG: Dict[str, str] = {
-    'host':     'localhost',
-    'user':     'root',
-    'password': '',  # ← altere antes de executar
-    'database': 'tecmente',
-}
-
-# Pasta raiz onde as subpastas de extração serão criadas.
-PASTA_SAIDA: str = 'data'
-
-# Encoding dos arquivos CSV — utf-8-sig garante abertura correta no Excel.
-ENCODING: str = 'utf-8-sig'
+# Pasta raiz onde as subpastas de extração serão criadas — relativa ao script.
+RAIZ_PROJETO: Path = Path(__file__).parent
+PASTA_SAIDA: Path = RAIZ_PROJETO / 'data'
 
 # =============================================================================
 # CONFIGURAÇÃO DE LOG
@@ -136,6 +129,7 @@ def _executar_e_gravar(
     caminho: str,
     logger: logging.Logger,
     nome_arquivo: str,
+    params: tuple | None = None,
 ) -> int:
     """Executa uma query e grava o resultado em CSV sem nenhuma transformação.
 
@@ -148,6 +142,7 @@ def _executar_e_gravar(
         caminho:       Caminho completo do arquivo CSV de destino.
         logger:        Logger da execução.
         nome_arquivo:  Nome do arquivo para exibição no log.
+        params:        Parâmetros para query parametrizada (opcional).
 
     Returns:
         Número de linhas escritas (excluindo cabeçalho).
@@ -155,7 +150,7 @@ def _executar_e_gravar(
     inicio = time.time()
 
     try:
-        cur.execute(query)
+        cur.execute(query, params)
         colunas = [d[0] for d in cur.description]
         rows = cur.fetchall()
 
@@ -192,7 +187,7 @@ def extrair_vendas(
     cur,
     pasta: str,
     logger: logging.Logger,
-    data_inicio: Optional[str],
+    data_inicio: str | None,
 ) -> int:
     """Extrai pedidos e itens de venda sem nenhuma transformação.
 
@@ -209,7 +204,13 @@ def extrair_vendas(
         Número de linhas escritas.
     """
     logger.info("Extraindo vendas...")
-    filtro = f"AND pe.data_pedido >= '{data_inicio}'" if data_inicio else ""
+
+    if data_inicio:
+        filtro = "AND pe.data_pedido >= %s"
+        params: tuple | None = (data_inicio,)
+    else:
+        filtro = ""
+        params = None
 
     query = f"""
         SELECT
@@ -249,6 +250,7 @@ def extrair_vendas(
         cur, query,
         os.path.join(pasta, 'vendas.csv'),
         logger, 'vendas.csv',
+        params=params,
     )
 
 
@@ -432,7 +434,7 @@ def main() -> None:
         help='Extrai apenas os últimos N dias (padrão: histórico completo).'
     )
     parser.add_argument(
-        '--saida', type=str, default=PASTA_SAIDA,
+        '--saida', type=str, default=str(PASTA_SAIDA),
         help=f'Pasta raiz de saída (padrão: {PASTA_SAIDA}).'
     )
     args = parser.parse_args()
@@ -464,8 +466,8 @@ def main() -> None:
     logger.info("=" * 60)
 
     inicio_total = time.time()
-    totais: Dict[str, int] = {}
-    erros: List[str] = []
+    totais: dict[str, int] = {}
+    erros: list[str] = []
 
     # ─────────────────────────────────────────────────────────────
     # Conexão + Execução (um único bloco controlado)

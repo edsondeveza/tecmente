@@ -59,20 +59,30 @@ Versão: 1.0
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import sys
 from datetime import datetime
-from typing import List, Tuple
+from pathlib import Path
 
 import pandas as pd
+
+from config import ENCODING
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURAÇÕES
 # =============================================================================
 
-PASTA_RAIZ: str = 'data'
-ENCODING: str = 'utf-8-sig'   # compatível com Excel
+# Pasta raiz — relativa ao diretório do script
+PASTA_RAIZ: Path = Path(__file__).parent / 'data'
 
 
 # =============================================================================
@@ -93,7 +103,7 @@ class RelatorioQualidade:
 
     def __init__(self, caminho: str) -> None:
         self.caminho = caminho
-        self.linhas: List[str] = []
+        self.linhas: list[str] = []
         self._inicio = datetime.now()
 
     def secao(self, titulo: str) -> None:
@@ -103,7 +113,7 @@ class RelatorioQualidade:
         self.linhas.append(f'  {titulo}')
         self.linhas.append('─' * 60)
 
-    def registro(self, descricao: str, valor) -> None:
+    def registro(self, descricao: str, valor: str | int | float) -> None:
         """Adiciona uma linha de métrica ao relatório."""
         self.linhas.append(f'  {descricao:<45} {valor}')
 
@@ -130,7 +140,7 @@ class RelatorioQualidade:
         ]
         with open(self.caminho, 'w', encoding='utf-8') as f:
             f.write('\n'.join(cabecalho + self.linhas))
-        print(f'  Relatório salvo: {os.path.basename(self.caminho)}')
+        log.info('Relatório salvo: %s', os.path.basename(self.caminho))
 
 
 # =============================================================================
@@ -216,7 +226,7 @@ def normalizar_cpf_cnpj(valor) -> str:
     return re.sub(r'[^\d]', '', str(valor))
 
 
-def corrigir_email(valor) -> Tuple[str, bool]:
+def corrigir_email(valor) -> tuple[str, bool]:
     """Corrige typos comuns em e-mail e sinaliza se é válido.
 
     Correção aplicada: ``.con`` → ``.com`` (erro de digitação frequente
@@ -361,7 +371,7 @@ def tratar_clientes(
     relatorio.registro('Idades não calculadas (sem data)',
                        df['idade'].isna().sum())
 
-    print(f'  clientes_tratado.csv    — {len(df):>6,} linhas')
+    log.info('clientes_tratado.csv — %d linhas', len(df))
     return df
 
 
@@ -474,10 +484,12 @@ def tratar_vendas(
     relatorio.registro('Margem média (%)',
                        f"{df_ativos['margem_pct'].mean():.1f}%")
 
-    print(
-        f'  vendas_tratado.csv      — {len(df_ativos):>6,} linhas  ({df_ativos["id_pedido"].nunique()} pedidos ativos)')
-    print(
-        f'  vendas_cancelados.csv   — {len(df_cancelados):>6,} linhas  ({df_cancelados["id_pedido"].nunique()} pedidos cancelados)')
+    log.info(
+        'vendas_tratado.csv — %d linhas (%d pedidos ativos)',
+        len(df_ativos), df_ativos['id_pedido'].nunique())
+    log.info(
+        'vendas_cancelados.csv — %d linhas (%d pedidos cancelados)',
+        len(df_cancelados), df_cancelados['id_pedido'].nunique())
     return df_ativos
 
 
@@ -550,8 +562,9 @@ def tratar_produtos_estoque(
         qtd = (df['faixa_preco'] == faixa).sum()
         relatorio.registro(f'  Faixa {faixa}', f'{qtd} registros')
 
-    print(
-        f'  produtos_estoque_tratado.csv — {len(df):>6,} linhas  ({df["id_produto"].nunique()} produtos)')
+    log.info(
+        'produtos_estoque_tratado.csv — %d linhas (%d produtos)',
+        len(df), df['id_produto'].nunique())
     return df
 
 
@@ -621,7 +634,7 @@ def tratar_equipe_lojas(
         qtd = (df['faixa_salarial'] == faixa).sum()
         relatorio.registro(f'  Faixa {faixa}', f'{qtd} funcionários')
 
-    print(f'  equipe_lojas_tratado.csv — {len(df):>6,} linhas')
+    log.info('equipe_lojas_tratado.csv — %d linhas', len(df))
     return df
 
 
@@ -641,7 +654,7 @@ def main() -> None:
         help='Data da extração a tratar (AAAA-MM-DD). Padrão: hoje.'
     )
     parser.add_argument(
-        '--pasta', type=str, default=PASTA_RAIZ,
+        '--pasta', type=str, default=str(PASTA_RAIZ),
         help=f'Pasta raiz das extrações (padrão: {PASTA_RAIZ}).'
     )
     args = parser.parse_args()
@@ -651,24 +664,24 @@ def main() -> None:
 
     # Valida pasta de entrada
     if not os.path.exists(pasta_entrada):
-        print(f'\nERRO: Pasta de entrada não encontrada: {pasta_entrada}')
-        print(f'  Execute primeiro o extrator.py para a data {args.data}')
+        log.error('ERRO: Pasta de entrada não encontrada: %s', pasta_entrada)
+        log.error('Execute primeiro o extrator.py para a data %s', args.data)
         sys.exit(1)
 
     os.makedirs(pasta_saida, exist_ok=True)
 
-    print('\n' + '=' * 60)
-    print('  TecMente — Tratador de Dados v1.0  (Analista)')
-    print('=' * 60)
-    print(f'Entrada : {os.path.abspath(pasta_entrada)}')
-    print(f'Saída   : {os.path.abspath(pasta_saida)}')
-    print('-' * 60)
+    log.info('=' * 60)
+    log.info('TecMente — Tratador de Dados v1.0  (Analista)')
+    log.info('=' * 60)
+    log.info('Entrada : %s', os.path.abspath(pasta_entrada))
+    log.info('Saída   : %s', os.path.abspath(pasta_saida))
+    log.info('-' * 60)
 
     relatorio = RelatorioQualidade(
         os.path.join(pasta_saida, 'relatorio_qualidade.txt')
     )
 
-    erros: List[str] = []
+    erros: list[str] = []
 
     # Mapa de arquivos: (arquivo_entrada, função, args_extras)
     tarefas = [
@@ -703,7 +716,7 @@ def main() -> None:
         caminho_entrada = os.path.join(pasta_entrada, nome_arquivo)
         if not os.path.exists(caminho_entrada):
             msg = f'Arquivo não encontrado: {nome_arquivo}'
-            print(f'  AVISO: {msg}')
+            log.warning('AVISO: %s', msg)
             erros.append(msg)
             continue
         try:
@@ -711,41 +724,41 @@ def main() -> None:
 
         except pd.errors.EmptyDataError:
             msg = f'Arquivo vazio ou sem dados: {nome_arquivo}'
-            print(f'  ERRO: {msg}')
+            log.error('ERRO: %s', msg)
             erros.append(msg)
 
         except pd.errors.ParserError as e:
             msg = f'Arquivo corrompido ou mal formatado ({nome_arquivo}): {e}'
-            print(f'  ERRO: {msg}')
+            log.error('ERRO: %s', msg)
             erros.append(msg)
 
         except KeyError as e:
             msg = f'Coluna esperada não encontrada em {nome_arquivo}: {e}'
-            print(f'  ERRO: {msg}')
+            log.error('ERRO: %s', msg)
             erros.append(msg)
 
         except OSError as e:
             msg = f'Erro de leitura/gravação em {nome_arquivo}: {e}'
-            print(f'  ERRO: {msg}')
+            log.error('ERRO: %s', msg)
             erros.append(msg)
 
         except Exception as e:
             # Captura qualquer outro erro inesperado não previsto acima
             msg = f'Erro inesperado em {nome_arquivo}: {e}'
-            print(f'  ERRO: {msg}')
+            log.error('ERRO: %s', msg)
             erros.append(msg)
 
     relatorio.salvar()
 
-    print('-' * 60)
+    log.info('-' * 60)
     if erros:
-        print(f'  Concluído com {len(erros)} aviso(s)/erro(s):')
+        log.warning('Concluído com %d aviso(s)/erro(s):', len(erros))
         for e in erros:
-            print(f'    {e}')
+            log.warning('  %s', e)
     else:
-        print('  Tratamento concluído com sucesso.')
-        print('  Próximo passo: entregar pasta _tratado ao time de BI.')
-    print('=' * 60 + '\n')
+        log.info('Tratamento concluído com sucesso.')
+        log.info('Próximo passo: entregar pasta _tratado ao time de BI.')
+    log.info('=' * 60)
 
 
 if __name__ == '__main__':

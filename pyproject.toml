@@ -1,7 +1,7 @@
 [project]
 name = "tecmente"
 version = "0.1.0"
-description = ""
+description = "Pipeline de dados para estudo de análise — e-commerce fictício de informática (TecMente)"
 authors = [
     {name = "edsondeveza",email = "edsondeveza@hotmail.com"}
 ]
@@ -13,8 +13,12 @@ dependencies = [
     "mysql-connector-python (==8.4.0)",
     "matplotlib (>=3.10.8,<4.0.0)",
     "seaborn (>=0.13.2,<0.14.0)",
-    "plotly (>=6.6.0,<7.0.0)"
+    "python-dotenv (>=1.0.0)"
 ]
+
+# Plotly é usado apenas na Fase 2 (dashboards interativos) — instalação opcional.
+[project.optional-dependencies]
+interativo = ["plotly (>=6.6.0,<7.0.0)"]
 
 [tool.poetry]
 packages = [{include = "tecmente", from = "src"}]
@@ -22,6 +26,7 @@ packages = [{include = "tecmente", from = "src"}]
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^7.2.0"
+pytest = "^8.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
