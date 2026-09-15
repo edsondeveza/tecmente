@@ -33,10 +33,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Habilita UTF-8 para todas as operações de I/O do Python neste processo.
+# Alinhado com o padrão UTF-8 do projeto e garante consistência com os filhos.
+# PYTHONUTF8=1 não funciona em runtime (I/O já inicializado); reconfigure é o
+# caminho correto para forçar UTF-8 no processo atual.
+sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +56,20 @@ log = logging.getLogger(__name__)
 
 # Pasta raiz do projeto — relativa ao script
 PASTA_RAIZ: Path = Path(__file__).parent
+
+# Padrão para extrair o nível de log de mensagens dos scripts filhos.
+# Formato esperado: "2026-09-15 10:41:07 INFO     Mensagem..."
+_PADRAO_LOG = re.compile(
+    r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+"
+    r"(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+"
+)
+_NIVEIS_LOG: dict[str, int] = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 
 def executar_etapa(nome: str, script: str, args: list[str] | None = None) -> bool:
@@ -67,6 +90,10 @@ def executar_etapa(nome: str, script: str, args: list[str] | None = None) -> boo
     if args:
         cmd.extend(args)
 
+    # Força UTF-8 no processo filho (mecanismo oficial Python 3.7+).
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+
     log.info("─" * 55)
     log.info("▶ Início : %s", nome)
     log.info("  Comando: %s", " ".join(cmd))
@@ -80,16 +107,20 @@ def executar_etapa(nome: str, script: str, args: list[str] | None = None) -> boo
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="replace",
+            env=env,
         )
         duracao = time.perf_counter() - t0
 
         if resultado.stdout.strip():
             for linha in resultado.stdout.strip().splitlines():
-                log.info("  │ %s", linha)
+                m = _PADRAO_LOG.match(linha)
+                nivel = _NIVEIS_LOG.get(m.group(1), logging.INFO) if m else logging.INFO
+                log.log(nivel, "  │ %s", linha)
         if resultado.stderr.strip():
             for linha in resultado.stderr.strip().splitlines():
-                log.warning("  │ %s", linha)
+                m = _PADRAO_LOG.match(linha)
+                nivel = _NIVEIS_LOG.get(m.group(1), logging.INFO) if m else logging.INFO
+                log.log(nivel, "  │ %s", linha)
 
         if resultado.returncode == 0:
             log.info("✔ Fim    : %s (%.1fs) — sucesso", nome, duracao)
