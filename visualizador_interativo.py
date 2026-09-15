@@ -200,7 +200,7 @@ def dashboard_02_interativo() -> None:
     )
     resumo = faturamento.merge(pedidos, on="loja")
     resumo["ticket_medio"] = resumo["total"] / resumo["pedidos"]
-    resumo.sort_values("total", ascending=False, inplace=True)
+    resumo = resumo.sort_values("total", ascending=False)
 
     n_lojas = len(resumo)
     cores = (SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1))[:n_lojas]
@@ -397,7 +397,7 @@ def dashboard_04_interativo() -> None:
         lambda r: f"{meses_abrev[int(r['mes']) - 1]}/{str(int(r['ano']))[2:]}",
         axis=1,
     )
-    mensal.sort_values(["ano", "mes"], inplace=True)
+    mensal = mensal.sort_values(["ano", "mes"])
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -479,11 +479,12 @@ def dashboard_05_interativo() -> None:
     total_geral: float = float(categorias["total"].sum())
     categorias["pct_acum"] = categorias["total"].cumsum() / total_geral * 100
 
-    cores = []
-    acum = 0.0
-    for _, row in categorias.iterrows():
-        acum += row["total"] / total_geral * 100
-        cores.append(PALETA["secundaria"] if acum <= 80.0 else PALETA["primaria"])
+    # Vetorizado: reutiliza pct_acum (mesmo cálculo do old loop iterrows), com
+    # semântica estrita <= preservada para manter a regra de negócio do Pareto.
+    cores = [
+        PALETA["secundaria"] if p <= 80.0 else PALETA["primaria"]
+        for p in categorias["pct_acum"]
+    ]
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -643,7 +644,7 @@ def dashboard_07_interativo() -> None:
         on="id_cliente",
         how="left",
     )
-    df["data_pedido"] = pd.to_datetime(df["data_pedido"])
+    df["data_pedido"] = pd.to_datetime(df["data_pedido"], errors="coerce")
 
     data_ref = df["data_pedido"].max() + pd.Timedelta(days=1)
     rfm = (
@@ -657,30 +658,33 @@ def dashboard_07_interativo() -> None:
     )
 
     quartis = rfm[["recencia", "frequencia", "valor"]].quantile([0.25, 0.5, 0.75])
+    # Limites por coluna extraídos via dict (chaves float exatas de 0.25/0.5/0.75)
+    limites = {col: quartis[col].to_dict() for col in quartis.columns}
 
     def _score(col: str, invert: bool) -> list[int]:
-        def _q(v: float, qs: float) -> int:
+        def _q(v: float) -> int:
+            qs = limites[col]
             if invert:
                 return (
                     4
-                    if v <= qs.loc[0.25, col]
+                    if v <= qs[0.25]
                     else 3
-                    if v <= qs.loc[0.50, col]
+                    if v <= qs[0.50]
                     else 2
-                    if v <= qs.loc[0.75, col]
+                    if v <= qs[0.75]
                     else 1
                 )
             return (
                 1
-                if v <= qs.loc[0.25, col]
+                if v <= qs[0.25]
                 else 2
-                if v <= qs.loc[0.50, col]
+                if v <= qs[0.50]
                 else 3
-                if v <= qs.loc[0.75, col]
+                if v <= qs[0.75]
                 else 4
             )
 
-        return [_q(v, quartis) for v in rfm[col]]
+        return [_q(v) for v in rfm[col]]
 
     rfm["R"] = _score("recencia", invert=True)
     rfm["F"] = _score("frequencia", invert=False)

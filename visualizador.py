@@ -272,7 +272,7 @@ def dashboard_01_faturamento_por_loja() -> None:
         .sum()
         .sort_values(by=["subtotal"], ascending=False)  # type: ignore
     )
-    faturamento.rename(columns={"loja_nome": "loja", "subtotal": "total"}, inplace=True)
+    faturamento = faturamento.rename(columns={"loja_nome": "loja", "subtotal": "total"})
 
     total_geral: float = faturamento["total"].sum()
     faturamento["pct"] = faturamento["total"] / total_geral * 100
@@ -426,7 +426,7 @@ def dashboard_02_total_por_unidade() -> None:
     )  # type: ignore
     resumo = faturamento.merge(pedidos, on="loja")
     resumo["ticket_medio"] = resumo["total"] / resumo["pedidos"]
-    resumo.sort_values("total", ascending=False, inplace=True)
+    resumo = resumo.sort_values("total", ascending=False)
 
     n_lojas: int = len(resumo)
     cores: list[str] = (SEQUENCIA_CORES * ((n_lojas // len(SEQUENCIA_CORES)) + 1))[
@@ -696,7 +696,7 @@ def dashboard_04_faturamento_mensal() -> None:
         lambda r: f"{meses_abrev[int(r['mes']) - 1]}/{str(int(r['ano']))[2:]}",
         axis=1,
     )
-    mensal.sort_values(["ano", "mes"], inplace=True)
+    mensal = mensal.sort_values(["ano", "mes"])
     periodos = mensal["periodo"].tolist()
     x = range(len(periodos))
 
@@ -829,12 +829,13 @@ def dashboard_05_faturamento_por_categoria() -> None:
     cores = [PALETA["primaria"]] * n
 
     # Destaca categorias que juntas chegam a 80% em âmbar
+    # Vetorizado: reutiliza pct_acum (mesmo cálculo do old loop iterrows), com
+    # semântica estrita <= preservada para manter a regra de negócio do Pareto.
     limite_pareto: float = 80.0
-    acum = 0.0
-    for i, row in categorias.iterrows():
-        acum += row["total"] / total_geral * 100
-        if acum <= limite_pareto:
-            cores[categorias.index.get_loc(i)] = PALETA["secundaria"]
+    cores = [
+        PALETA["secundaria"] if p <= limite_pareto else PALETA["primaria"]
+        for p in categorias["pct_acum"]
+    ]
 
     # --- Figura: eixo duplo ------------------------------------------------
     fig, ax1 = plt.subplots(figsize=(18, 8))
@@ -1154,7 +1155,7 @@ def dashboard_07_rfm() -> None:
         on="id_cliente",
         how="left",
     )
-    df["data_pedido"] = pd.to_datetime(df["data_pedido"])
+    df["data_pedido"] = pd.to_datetime(df["data_pedido"], errors="coerce")
 
     # --- Cálculo RFM ------------------------------------------------------
     data_ref = df["data_pedido"].max() + pd.Timedelta(days=1)
@@ -1169,48 +1170,44 @@ def dashboard_07_rfm() -> None:
         .reset_index()
     )
 
-    # Scores por quartis
+    # Scores por quartis — limites extraídos via dict
     quartis = rfm[["recencia", "frequencia", "valor"]].quantile([0.25, 0.5, 0.75])
+    q_rec = quartis["recencia"].to_dict()
+    q_freq = quartis["frequencia"].to_dict()
+    q_val = quartis["valor"].to_dict()
 
     rfm["R"] = rfm["recencia"].apply(
         lambda x: (
             4
-            if x <= quartis.loc[0.25, "recencia"]
-            # type: ignore
+            if x <= q_rec[0.25]
             else 3
-            if x <= quartis.loc[0.50, "recencia"]
-            # type: ignore
+            if x <= q_rec[0.50]
             else 2
-            if x <= quartis.loc[0.75, "recencia"]
+            if x <= q_rec[0.75]
             else 1
-        )  # type: ignore
+        )
     )
     rfm["F"] = rfm["frequencia"].apply(
-        # type: ignore
         lambda x: (
             1
-            if x <= quartis.loc[0.25, "frequencia"]
-            # type: ignore
+            if x <= q_freq[0.25]
             else 2
-            if x <= quartis.loc[0.50, "frequencia"]
-            # type: ignore
+            if x <= q_freq[0.50]
             else 3
-            if x <= quartis.loc[0.75, "frequencia"]
+            if x <= q_freq[0.75]
             else 4
-        )  # type: ignore
+        )
     )
     rfm["M"] = rfm["valor"].apply(
         lambda x: (
             1
-            if x <= quartis.loc[0.25, "valor"]
-            # type: ignore
+            if x <= q_val[0.25]
             else 2
-            if x <= quartis.loc[0.50, "valor"]
-            # type: ignore
+            if x <= q_val[0.50]
             else 3
-            if x <= quartis.loc[0.75, "valor"]
+            if x <= q_val[0.75]
             else 4
-        )  # type: ignore
+        )
     )
 
     # --- Figura 1: Scatter ------------------------------------------------

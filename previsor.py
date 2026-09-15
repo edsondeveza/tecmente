@@ -97,9 +97,10 @@ def agregar_diario(pasta: Path) -> pd.DataFrame:
         ordenado cronologicamente.
     """
     caminho = pasta / "vendas_tratado.csv"
-    df = pd.read_csv(
-        caminho, sep=",", encoding="utf-8-sig", parse_dates=["data_pedido"]
-    )
+    df = pd.read_csv(caminho, sep=",", encoding="utf-8-sig")
+    # parse_dates no read_csv é desencorajado no pandas 3.x; converte-se
+    # explicitamente após a leitura (produz datetime64[us] idêntico).
+    df["data_pedido"] = pd.to_datetime(df["data_pedido"])
     diario = (
         df.groupby(df["data_pedido"].dt.date, as_index=False)["subtotal"]
         .sum()
