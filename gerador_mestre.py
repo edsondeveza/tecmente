@@ -57,10 +57,10 @@ log = logging.getLogger(__name__)
 fake = Faker("pt_BR")
 # random.seed(42)  # remova para dados diferentes a cada execução
 
-NUM_CLIENTES: int = 3500  # 3.500 clientes
-NUM_PEDIDOS: int = 50000  # 50.000 pedidos
+NUM_CLIENTES: int = 10000  # 10.000clientes
+NUM_PEDIDOS: int = 100000  # 100.000 pedidos
 PROPORCAO_PJ: float = 0.15  # 15% dos clientes são Pessoa Jurídica
-DATA_INICIO = datetime.now() - timedelta(days=1825)  # 5 anos de histórico
+DATA_INICIO = datetime.now() - timedelta(days=3650)  # 10 anos de histórico
 # Multiplicadores de volume de vendas por mês.
 # Valores > 1.0 representam alta temporada; < 1.0, baixa temporada.
 # Referência: Black Friday (nov=1.80), volta às aulas (jan=1.30), Natal (dez=1.50).
@@ -2267,7 +2267,7 @@ def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
     pj_ids = [r[0] for r in todas if r[1] == "PJ"]
     # Pool de anomalia temporal: clientes registrados nos últimos 90 dias.
     # Recebem pedidos anteriores ao cadastro via RUIDO_PEDIDO_ANTES_CADASTRO.
-    recente_limiar = datetime.now() - timedelta(days=90)
+    recente_limiar = (datetime.now() - timedelta(days=90)).date()
     recentes = {r[0] for r in todas if r[2] >= recente_limiar}
 
     return pf_ids, pj_ids, recentes
@@ -2491,24 +2491,25 @@ def _flush(cur, peds: list[tuple], items: list[list[tuple]]) -> None:
         cur.execute(
             "INSERT INTO pedido "
             "(id_cliente, id_loja, id_funcionario, data_pedido, "
-            "status, canal, valor_total, desconto) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "status, canal, valor_total, desconto, obs) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             ped,
         )
         pedido_ids.append(cur.lastrowid)
 
     # Achata itens mantendo o vínculo correto com o id_pedido de cada um
     rows_itens = [
-        (id_ped, id_prod, qtd, preco, custo)
+        (id_ped, id_prod, qtd, preco, custo, desconto_item)
         for id_ped, itens in zip(pedido_ids, items)
-        for id_prod, qtd, preco, custo in itens
+        for id_prod, qtd, preco, custo, desconto_item in itens
     ]
 
     if rows_itens:
         cur.executemany(
             "INSERT INTO pedido_item "
-            "(id_pedido, id_produto, quantidade, preco_unitario, custo_unitario) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "(id_pedido, id_produto, quantidade, preco_unitario, "
+            "custo_unitario, desconto_item) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             rows_itens,
         )
 
