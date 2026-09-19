@@ -20,7 +20,7 @@ A **TecMente** é uma empresa fictícia de e-commerce de informática criada exc
 | ---------------------- | ---------------------- |
 | Banco de dados         | MySQL / MariaDB        |
 | Linguagem              | Python 3.12            |
-| Gerenciador de pacotes | Poetry 2.1.4           |
+| Gerenciador de pacotes | Poetry 2.4.1           |
 | Query e administração  | Azure Data Studio      |
 | Manipulação de dados   | pandas                 |
 | Geração de dados       | Faker                  |
@@ -42,10 +42,16 @@ tecmente/
 ├── visualizador.py               ← gráficos estáticos (BI)
 ├── visualizador_interativo.py    ← dashboards interativos Plotly
 ├── previsor.py                   ← previsão de vendas (scikit-learn)
+├── analise_bi.py                 ← análises avançadas de BI
+├── validador_coerencia.py        ← checks de coerência das regras de negócio
 ├── pipeline.py                   ← orquestra todo o fluxo automaticamente
+├── config.py                     ← configuração centralizada (.env via python-dotenv)
 ├── pyproject.toml                ← dependências do Poetry
+├── .env.example                  ← modelo de credenciais (copie para .env)
+├── tests/                        ← testes unitários (pytest)
+├── .github/workflows/ci.yml      ← CI (ruff + pytest)
 ├── sql/
-│   └── tecmente_schema.sql    ← schema do banco (DBA executa primeiro)
+│   └── tecmente_schema.sql    ← schema + views analíticas (DBA executa primeiro)
 ├── data/
 │   └── AAAA-MM-DD_tratado/       ← pasta gerada pelo tratador.py
 │       ├── vendas_tratado.csv
@@ -55,9 +61,10 @@ tecmente/
 │       ├── equipe_lojas_tratado.csv
 │       └── relatorio_qualidade.txt
 └── output/
-    ├── graficos/                 ← PNGs (visualizador.py) e HTML de previsão
+    ├── graficos/                 ← PNGs/HTML (visualizadores, previsor, BI)
     ├── relatorios/               ← HTML interativo (visualizador_interativo.py)
-    └── predicoes/                ← CSV e relatório do previsor.py
+    ├── predicoes/                ← CSV e relatório do previsor.py
+    └── analises/                 ← CSVs e relatório das análises de BI
 ```
 
 > **Nota:** o `visualizador.py` encontra automaticamente a pasta `_tratado`
@@ -83,9 +90,11 @@ visualizador_interativo.py
         ↓ BI gera dashboards Plotly → output/relatorios/
 previsor.py (opcional)
         ↓ DS projeta vendas → output/predicoes/
+analise_bi.py (opcional)
+        ↓ BI gera análises avançadas → output/analises/
 
 # Orquestração automática de todo o fluxo:
-pipeline.py --prever
+pipeline.py --prever --bi
 ```
 
 ---
@@ -124,11 +133,11 @@ pipeline.py --prever
 | `fornecedor`   | 40 distribuidoras reais do setor de TI   |
 | `loja`         | 6 lojas da rede (físicas e online)       |
 | `departamento` | Departamentos da empresa                 |
-| `produto`      | 154 produtos com descrição por template  |
+| `produto`      | 153 produtos com descrição por template  |
 | `estoque`      | Quantidade por produto por loja          |
 | `funcionario`  | 80 funcionários distribuídos nas lojas   |
-| `cliente`      | 3.500 clientes PF e PJ                   |
-| `pedido`       | 50.000 pedidos com sazonalidade e canais |
+| `cliente`      | 10.000 clientes PF e PJ (15% PJ)         |
+| `pedido`       | 100.000 pedidos com sazonalidade e canais |
 | `pedido_item`  | Itens de cada pedido                     |
 
 ### Views analíticas
@@ -140,6 +149,9 @@ pipeline.py --prever
 | `vw_rfm`                | Recência, Frequência e Valor por cliente       |
 | `vw_vendas_canal`       | Receita e ticket médio por canal e loja        |
 | `vw_categorias`         | Performance por grupo de categoria             |
+| `vw_clientes`           | Clientes enriquecidos (idade, validade de e-mail, dias desde cadastro) |
+| `vw_vendas_itens`       | Vendas no nível de item (produto, categoria, margem, datas) |
+| `vw_pedidos` / `vw_pedidos_itens` | Pedidos e itens com join de loja/cliente/produto |
 
 ---
 
@@ -155,6 +167,9 @@ O `gerador_mestre.py` gera dados com **ruído realista intencional** para exerci
 - Sazonalidade de vendas: Black Friday (+80%), Natal (+50%), Volta às aulas (+30%)
 - Distribuição de Pareto: 20% dos produtos respondem por ~60% das vendas
 - Clientes segmentados: 8% super-ativos, 22% inativos, 70% normais
+- Concentração geográfica: ~26% dos clientes em SP e ~12% em MG (onde ficam as lojas), com capilaridade nas demais UFs
+- Sazonalidade intra-semana: dias úteis com mais vendas (segunda a sexta ~+5-8%), sábado ~-5%, domingo ~-27%
+- Margem bruta **variável por faixa de preço e categoria**: LOW 45–55%, MID 38–48%, HIGH 30–40%, ULTRA 22–32%, com ajustes por grupo de categoria (ex.: Cabos e Adaptadores +4pp, Notebooks e Laptops −2pp) — o custo do item no pedido é idêntico ao custo cadastrado do produto
 
 ### Catálogo de ruído
 
@@ -178,6 +193,43 @@ Todas as taxas de ruído são controláveis por constantes no topo de `gerador_m
 
 ---
 
+## Regras de negócio
+
+Regras comerciais implementadas no `gerador_mestre.py` e verificadas pelo `validador_coerencia.py`:
+
+### Desconto por tipo de loja
+
+- Pedidos de loja **Física**: desconto de **3%** sobre o valor bruto.
+- Pedidos **Online**: desconto de **5%** sobre o valor bruto.
+- O desconto é calculado **no nível do pedido** (`pedido.desconto`), nunca por item (`pedido_item` não possui coluna de desconto por linha).
+
+### Quantidade mínima em pedidos PJ
+
+- Pedidos de clientes **PJ** possuem no mínimo **5 produtos distintos** (uma linha por produto; a soma das unidades fica em `pedido_item.quantidade`).
+- Pedidos **PF** possuem entre 1 e 4 produtos distintos.
+- Definição adotada: "5 itens" = **5 produtos diferentes**, não 5 linhas nem 5 unidades.
+- O gerador **não repete o mesmo produto** dentro de um mesmo pedido.
+
+### Tipo de loja ≠ canal
+
+| Tipo de loja | Canais possíveis                    |
+| ------------ | ----------------------------------- |
+| `Física`     | `Loja Física` (com atendente)       |
+| `Online`     | `Site`, `Marketplace`, `WhatsApp`, `Televendas` (sem atendente) |
+
+### Cálculo dos valores do pedido
+
+| Campo                    | Fórmula                                   |
+| ------------------------ | ----------------------------------------- |
+| `valor_bruto`            | `Σ (quantidade × preco_unitario)`         |
+| `pedido.desconto`        | `valor_bruto × %` (3% Física / 5% Online) |
+| `pedido.valor_total`     | `valor_bruto − desconto` (valor **final**) |
+| `pedido_item.preco_unitario` | Preço de **tabela** (`produto.preco_venda`), sem desconto embutido |
+
+> **Nota:** `pedido.valor_total` armazena o **valor final** (após o desconto). Para reconstruir o valor bruto: `valor_total + desconto`. Nas views analíticas, `vw_faturamento_mensal.receita_bruta` já soma esse desconto (`SUM(valor_total + desconto)`).
+
+---
+
 ## Instalação
 
 ```bash
@@ -192,8 +244,10 @@ poetry install
 # 3. Crie o banco de dados
 # Execute tecmente_schema.sql no Azure Data Studio ou HeidiSQL
 
-# 4. Configure a senha do banco nos scripts
-# Edite DB_CONFIG em cada script Python
+# 4. Configure as credenciais do banco
+# Copie o .env.example para .env e preencha os valores
+# (config.py centraliza a leitura via python-dotenv)
+cp .env.example .env
 ```
 
 ---
@@ -225,11 +279,17 @@ poetry run python visualizador_interativo.py
 # Previsão de vendas (Random Forest — 14 dias)
 poetry run python previsor.py
 
-# Pipeline completo de ponta a ponta (com previsão)
-poetry run python pipeline.py --prever
+# Análises avançadas de BI (coorte, LTV, RFM, cesta, ABC/XYZ, estoque, cancelamento)
+poetry run python analise_bi.py
+
+# Apenas uma análise específica
+poetry run python analise_bi.py --apenas rfm
+
+# Pipeline completo de ponta a ponta (com previsão e análises de BI)
+poetry run python pipeline.py --prever --bi
 
 # Tudo, limitando a extração aos últimos 7 dias
-poetry run python pipeline.py --dias 7 --prever
+poetry run python pipeline.py --dias 7 --prever --bi
 ```
 
 ---
@@ -240,7 +300,7 @@ poetry run python pipeline.py --dias 7 --prever
 
 Popula todas as tabelas do banco sem dependência de arquivo externo. Produtos, categorias, fornecedores, clientes, funcionários e pedidos são gerados internamente com templates por categoria.
 
-**Limitação conhecida:** `random.seed(42)` fixo para reprodutibilidade. Remova o seed para gerar dados diferentes a cada execução.
+**Versão 1.1:** margens variáveis por faixa/categoria (custo do pedido = custo do produto), sazonalidade intra-semana e concentração geográfica dos clientes — ver seção "Dados sintéticos — características". Cada execução produz dados diferentes (sem seed fixo).
 
 **Status v1.0:** `DB_CONFIG['database']` corrigido para `'tecmente'`. ✅
 
@@ -331,17 +391,35 @@ Saídas em `output/predicoes/`: CSV com a previsão (`previsao_vendas.csv`), rel
 
 **Status v1.0:** Treino/teste com métricas MAE, RMSE e MAPE; funções testadas isoladamente. ✅
 
+### `analise_bi.py`
+
+Módulo de análises avançadas de BI (papel: Analista de BI Sênior) que lê os dados tratados e gera insights em `output/analises/`:
+
+| Análise              | Arquivos                                          | O que entrega |
+| -------------------- | ------------------------------------------------- | ------------- |
+| Retenção por coorte  | `coorte_retencao.csv`, `bi_coorte_retencao.html`  | Matriz de retenção % por mês de aquisição |
+| LTV por segmento     | `ltv_segmentos.csv`                               | LTV, ticket médio e pedidos por tipo × canal |
+| RFM rotulado         | `rfm_clientes.csv`, `rfm_resumo.csv`, `bi_rfm_scatter.html` | Segmentação com rótulos (Campeões, Fiéis, Em Risco...) |
+| Afinidade de cesta   | `afinidade_cesta.csv`                             | Produtos comprados juntos (co-ocorrências) |
+| ABC/XYZ de produtos  | `abc_xyz_produtos.csv`, `bi_abc_xyz.html`         | Priorização A/B/C (receita) × X/Y/Z (estabilidade) |
+| Saúde de estoque     | `saude_estoque.csv`                               | Cobertura em dias, alertas de ruptura/excesso |
+| Cancelamento por canal | `cancelamento_canal.csv`, `bi_cancelamento_canal.html` | Taxa e receita perdida por canal |
+
+Um relatório consolidado (`relatorio_analises.txt`) resume os principais achados. A análise respeita o valor real do pedido mesmo quando o CSV repete `valor_total` por item — via agregação no nível de pedido antes das somas.
+
+**Status v1.0:** 8 análises implementadas e testadas (11 testes unitários). ✅
+
 ### `pipeline.py`
 
-Orquestra todas as etapas via `subprocess` em sequência: extração → tratamento → dashboards estáticos → dashboards interativos → (opcional) previsão. Interrompe e reporta falha caso uma etapa retorne código de saída ≠ 0.
+Orquestra todas as etapas via `subprocess` em sequência: extração → tratamento → dashboards estáticos → dashboards interativos → (opcional) previsão → (opcional) análises de BI. Interrompe e reporta falha caso uma etapa retorne código de saída ≠ 0.
 
 **Agendamento** (Task Scheduler do Windows):
 
 ```bat
-schtasks /create /tn "TecMente_Pipeline" /tr "C:\estudos\tecmente\.venv\Scripts\python.exe C:\estudos\tecmente\pipeline.py --prever" /sc daily /st 06:00
+schtasks /create /tn "TecMente_Pipeline" /tr "C:\estudos\tecmente\.venv\Scripts\python.exe C:\estudos\tecmente\pipeline.py --prever --bi" /sc daily /st 06:00
 ```
 
-**Status v1.0:** Execução de ponta a ponta validada (extração → previsão). ✅
+**Status v1.1:** Execução de ponta a ponta validada (extração → análises de BI), com flags `--prever` e `--bi`. ✅
 
 ---
 
@@ -367,8 +445,8 @@ Comparação entre faturamento total e ticket médio por produto, destacando ite
 
 - O faturamento está **bem distribuído entre as lojas**, sem grande concentração em uma única unidade.
 - A variação entre a loja com maior e menor faturamento é relativamente pequena, indicando **equilíbrio operacional**.
-- A Loja Campinas apresenta o maior faturamento, mas com diferença pouco significativa em relação às demais.
-- O CD Osasco possui o menor faturamento, o que pode indicar seu papel mais logístico do que comercial.
+- A Loja Paulista apresenta o maior faturamento, mas com diferença pouco significativa em relação às demais.
+- O Escritório Central possui o menor faturamento, o que pode indicar seu papel mais logístico/comercial do que operacional.
 - Esse cenário sugere uma operação madura, com boa distribuição de vendas e menor risco de dependência de uma única unidade.
 
 ---
@@ -419,14 +497,15 @@ Comparação entre faturamento total e ticket médio por produto, destacando ite
 
 ---
 
-### ⚫ RFM (Recência, Frequência e Valor) _(em desenvolvimento)_
+### ⚫ RFM (Recência, Frequência e Valor)
 
 - Segmentação de clientes baseada em comportamento de compra.
-- Permitirá identificar:
-  - Clientes fiéis
+- Permite identificar:
+  - Clientes fiéis (Campeões/Fiéis concentram a maior parte do faturamento)
   - Clientes em risco
   - Clientes de alto valor
 - Base para campanhas personalizadas e estratégias de retenção.
+- Implementado no `analise_bi.py` (com rótulos e heatmaps). ✅
 
 ---
 
@@ -447,13 +526,14 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 | Etapa               | Script                          | Status          | Validado em |
 | ------------------- | ------------------------------- | --------------- | ----------- |
 | Schema do banco     | `tecmente_schema.sql`           | ✅ Concluído     | 2026-04-13  |
-| Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-04-13  |
+| Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-09-18  |
 | Extração DBA        | `extrator.py`                   | ✅ Concluído     | 2026-04-13 |
 | Tratamento Analista | `tratador.py`                   | ✅ Concluído     | 2026-04-13 |
 | Entrega ao BI       | `visualizador.py`               | ✅ Concluído     | 2026-04-13 |
 | Dashboards Plotly   | `visualizador_interativo.py`    | ✅ Concluído     | 2026-09-14 |
 | Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-14 |
-| Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-14 |
+| Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-18 |
+| Análises de BI      | `analise_bi.py`                 | ✅ Concluído     | 2026-09-18 |
 
 ---
 
@@ -466,6 +546,7 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 - [x] Visualizações interativas — Plotly (7 dashboards HTML)
 - [x] Análise preditiva de vendas — Random Forest (14 dias)
 - [x] Automatização do fluxo — `pipeline.py` + agendamento (Task Scheduler / cron)
+- [x] Análises avançadas de BI — `analise_bi.py` (coorte, LTV, RFM, cesta, ABC/XYZ, estoque, cancelamento)
 - [ ] Power BI — após conclusão da formação Daxus
 - [x] CI — GitHub Actions (ruff + pytest) via workflow em `.github/`
 
