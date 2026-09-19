@@ -9,11 +9,14 @@ Orquestra todas as etapas do pipeline em sequência via ``subprocess``:
   3. visualizador.py            — gráficos estáticos (matplotlib)
   4. visualizador_interativo.py — dashboards interativos (Plotly)
   5. previsor.py                — previsão de vendas (scikit-learn) [opcional]
+  6. analise_bi.py              — análises avançadas de BI [opcional]
 
 Uso
 ---
-    python pipeline.py                     # roda tudo (sem previsão)
+    python pipeline.py                     # roda tudo (sem previsão/BI)
     python pipeline.py --prever            # inclui previsão
+    python pipeline.py --bi                # inclui análises de BI
+    python pipeline.py --prever --bi       # inclui ambos
     python pipeline.py --dias 7            # extração dos últimos 7 dias
     python pipeline.py --dias 30 --prever  # 30 dias + previsão
 
@@ -155,6 +158,11 @@ def main() -> None:
         action="store_true",
         help="Incluir o previsor de vendas ao final do pipeline.",
     )
+    parser.add_argument(
+        "--bi",
+        action="store_true",
+        help="Incluir as análises avançadas de BI (analise_bi.py).",
+    )
     args = parser.parse_args()
 
     log.info("=" * 55)
@@ -170,6 +178,8 @@ def main() -> None:
     ]
     if args.prever:
         etapas.append(("Previsão de Vendas", "previsor.py", []))
+    if args.bi:
+        etapas.append(("Análises de BI", "analise_bi.py", []))
 
     t_inicio = time.perf_counter()
     falhas: list[str] = []
