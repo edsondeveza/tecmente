@@ -117,6 +117,7 @@ CREATE TABLE pedido (
         'Televendas'
     ) NOT NULL,
     valor_total DECIMAL(12, 2) NOT NULL,
+    -- guarda o VALOR FINAL após o desconto (final = bruto - desconto)
     desconto DECIMAL(10, 2) DEFAULT 0,
     obs VARCHAR(255),
     FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente),
@@ -133,7 +134,6 @@ CREATE TABLE pedido_item (
     quantidade INT NOT NULL,
     preco_unitario DECIMAL(10, 2) NOT NULL,
     custo_unitario DECIMAL(10, 2),
-    desconto_item DECIMAL(10, 2) DEFAULT 0,
     FOREIGN KEY (id_pedido) REFERENCES pedido(id_pedido),
     FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
     INDEX idx_pedido (id_pedido),
@@ -149,7 +149,7 @@ SELECT DATE_FORMAT(data_pedido, '%Y-%m') AS ano_mes,
     MONTH(data_pedido) AS mes,
     COUNT(DISTINCT id_pedido) AS total_pedidos,
     COUNT(DISTINCT id_cliente) AS clientes_unicos,
-    SUM(valor_total) AS receita_bruta,
+    SUM(valor_total + desconto) AS receita_bruta,
     SUM(desconto) AS total_descontos,
     SUM(
         CASE
@@ -204,6 +204,80 @@ GROUP BY p.id_produto,
     c.nome_pai,
     p.preco_venda
 ORDER BY receita DESC;
+-- Clientes (espelho analítico do clientes_tratado.csv p/ modo FONTE="sql")
+CREATE OR REPLACE VIEW vw_clientes AS
+SELECT c.id_cliente,
+    c.nome,
+    c.sobrenome,
+    c.tipo,
+    c.email,
+    c.cpf_cnpj AS cpf_cnpj_normalizado,
+    c.telefone,
+    c.data_nascimento,
+    c.data_cadastro,
+    c.cidade,
+    c.estado,
+    CASE
+        WHEN c.email IS NULL THEN 0
+        WHEN c.email NOT REGEXP
+            '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN 0
+        ELSE 1
+    END AS email_valido,
+    CASE
+        WHEN c.data_nascimento IS NULL THEN NULL
+        ELSE TIMESTAMPDIFF(YEAR, c.data_nascimento, CURDATE())
+    END AS idade,
+    DATEDIFF(CURDATE(), c.data_cadastro) AS dias_desde_cadastro
+FROM cliente c;
+-- Vendas a nível de item (espelho do vendas_tratado.csv p/ modo FONTE="sql").
+-- Única fonte item-level: atende D01–D07 com filtros por status.
+CREATE OR REPLACE VIEW vw_vendas_itens AS
+SELECT pe.id_pedido,
+    pe.id_cliente,
+    pe.id_loja,
+    pe.id_funcionario,
+    pe.data_pedido,
+    pe.status,
+    pe.canal,
+    l.nome AS loja_nome,
+    l.tipo AS loja_tipo,
+    pi.id_item,
+    pi.id_produto,
+    pi.quantidade,
+    pi.preco_unitario,
+    pi.custo_unitario,
+    p.sku,
+    p.nome AS produto_nome,
+    c.id_categoria,
+    c.nome AS categoria_nome,
+    c.nome_pai AS categoria_pai,
+    (pi.quantidade * pi.preco_unitario) AS subtotal,
+    (
+        pi.quantidade * (
+            pi.preco_unitario - COALESCE(pi.custo_unitario, 0)
+        )
+    ) AS lucro_bruto,
+    CASE
+        WHEN pi.quantidade * pi.preco_unitario > 0 THEN ROUND(
+            (
+                pi.quantidade * (
+                    pi.preco_unitario - COALESCE(pi.custo_unitario, 0)
+                )
+            ) / (pi.quantidade * pi.preco_unitario) * 100,
+            2
+        )
+        ELSE NULL
+    END AS margem_pct,
+    YEAR(pe.data_pedido) AS ano,
+    MONTH(pe.data_pedido) AS mes,
+    QUARTER(pe.data_pedido) AS trimestre,
+    MOD(DAYOFWEEK(pe.data_pedido) + 5, 7) AS dia_semana
+FROM pedido pe
+    INNER JOIN cliente cl ON pe.id_cliente = cl.id_cliente
+    INNER JOIN loja l ON pe.id_loja = l.id_loja
+    INNER JOIN pedido_item pi ON pe.id_pedido = pi.id_pedido
+    INNER JOIN produto p ON pi.id_produto = p.id_produto
+    INNER JOIN categoria c ON p.id_categoria = c.id_categoria;
 -- RFM de clientes (Recência, Frequência, Valor)
 CREATE OR REPLACE VIEW vw_rfm AS
 SELECT c.id_cliente,

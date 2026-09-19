@@ -428,13 +428,10 @@ def tratar_vendas(
     # muito mais eficiente do que um loop linha a linha.
     df["subtotal"] = (df["quantidade"] * df["preco_venda"]).round(2)
 
-    # Desconto global do pedido (só PJ, valor absoluto em R$) alocado
-    # proporcionalmente aos itens: a soma por pedido passa a ser valor_total - desconto.
-    # `desconto`/`valor_total` são de nível de pedido — pandas os transmite para
-    # cada linha de item, resultando em alocação proporcional automática.
-    fator_compra = 1 - (df["desconto"] / df["valor_total"])
-    fator_compra = fator_compra.where(df["valor_total"] > 0, 0)
-    df["subtotal"] = (df["subtotal"] * fator_compra).round(2)
+    # OBS: O desconto já está aplicado no valor_total do banco de dados.
+    # O campo 'desconto' no pedido contém o valor absoluto em R$ do desconto
+    # aplicado (3% para lojas físicas, 5% para lojas online).
+    # NÃO é necessário reaplicar o desconto aqui - o valor_total já é o valor final.
 
     df["lucro_bruto"] = (df["subtotal"] - df["quantidade"] * df["preco_custo"]).round(2)
 

@@ -254,14 +254,17 @@ def dashboard_01_faturamento_por_loja() -> None:
         vendas_tratado.csv (colunas: loja_nome, subtotal)
 
     Fonte SQL:
-        vw_vendas_canal
+        vw_vendas_itens (pedidos não cancelados)
 
     Saída:
         output/graficos/d01_faturamento_por_loja.png
     """
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT loja_nome, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     # ------------------------------------------------------------------ #
@@ -403,12 +406,15 @@ def dashboard_02_total_por_unidade() -> None:
     Painel direito  : ticket médio por loja (R$).
 
     Fonte CSV : vendas_tratado.csv  (colunas: loja_nome, subtotal, id_pedido)
-    Fonte SQL : vw_vendas_canal
+    Fonte SQL : vw_vendas_itens
     Saída     : output/graficos/d02_total_por_unidade.png
     """
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT loja_nome, subtotal, id_pedido FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     # --- Agregação ---------------------------------------------------------
@@ -528,12 +534,16 @@ def dashboard_03_top_vendedores() -> None:
 
     Fonte CSV : vendas_tratado.csv + equipe_lojas_tratado.csv
                 (join por id_funcionario)
-    Fonte SQL : query cruzada (sem view dedicada)
+    Fonte SQL : vw_vendas_itens + funcionario
     Saída     : output/graficos/d03_top_vendedores.png
     """
     df_vendas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT id_funcionario, loja_nome, subtotal, id_pedido "
+            "FROM vw_vendas_itens WHERE status != 'Cancelado' "
+            "AND id_funcionario IS NOT NULL"
+        ),
     )
     df_equipe = carregar_dados(
         nome_csv="equipe_lojas_tratado.csv",
@@ -649,16 +659,22 @@ def dashboard_04_faturamento_mensal() -> None:
 
     Fonte CSV : vendas_tratado.csv + vendas_cancelados.csv
                 (colunas: ano, mes, subtotal)
-    Fonte SQL : vw_faturamento_mensal
+    Fonte SQL : vw_vendas_itens (filtrada por status)
     Saída     : output/graficos/d04_faturamento_mensal.png
     """
     df_ativas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_faturamento_mensal",
+        query_sql=(
+            "SELECT ano, mes, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
     df_cancelados = carregar_dados(
         nome_csv="vendas_cancelados.csv",
-        query_sql="SELECT * FROM vw_faturamento_mensal",
+        query_sql=(
+            "SELECT ano, mes, subtotal FROM vw_vendas_itens "
+            "WHERE status = 'Cancelado'"
+        ),
     )
 
     # --- Agregação mensal --------------------------------------------------
@@ -806,12 +822,15 @@ def dashboard_05_faturamento_por_categoria() -> None:
         Linha de referência tracejada em 80% (regra de Pareto).
 
     Fonte CSV : vendas_tratado.csv  (colunas: categoria_pai, subtotal)
-    Fonte SQL : vw_categorias
+    Fonte SQL : vw_vendas_itens
     Saída     : output/graficos/d05_faturamento_por_categoria.png
     """
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_categorias",
+        query_sql=(
+            "SELECT categoria_pai, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     # --- Agregação por categoria pai ---------------------------------------
@@ -965,12 +984,15 @@ def dashboard_06_produtos_ticket_medio() -> None:
     enquanto o azul-petróleo marca os abaixo da média.
 
     Fonte CSV : vendas_tratado.csv  (colunas: produto_nome, subtotal, id_pedido)
-    Fonte SQL : vw_ranking_produtos
+    Fonte SQL : vw_vendas_itens
     Saída     : output/graficos/d06_produtos_ticket_medio.png
     """
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_ranking_produtos",
+        query_sql=(
+            "SELECT produto_nome, subtotal, id_pedido FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     # --- Agregação top 20 -------------------------------------------------
@@ -1136,7 +1158,7 @@ def dashboard_07_rfm() -> None:
         M: 4 = maior valor, 1 = menor valor
 
     Fonte CSV : clientes_tratado.csv + vendas_tratado.csv (join por id_cliente)
-    Fonte SQL : vw_rfm
+    Fonte SQL : vw_clientes + vw_vendas_itens
     Saída     : output/graficos/d07_rfm_scatter.png
                 output/graficos/d07_rfm_heatmap.png
     """
@@ -1146,7 +1168,10 @@ def dashboard_07_rfm() -> None:
     )
     df_vendas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT id_cliente, id_pedido, data_pedido, subtotal "
+            "FROM vw_vendas_itens WHERE status != 'Cancelado'"
+        ),
     )
 
     # --- Merge ------------------------------------------------------------

@@ -105,7 +105,10 @@ def dashboard_01_interativo() -> None:
     """Pizza (participação %) + barras horizontais (valor absoluto) por loja."""
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT loja_nome, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     faturamento = (
@@ -183,7 +186,10 @@ def dashboard_02_interativo() -> None:
     """Três painéis de barras horizontais: faturamento, pedidos e ticket médio."""
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT loja_nome, subtotal, id_pedido FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     pedidos = (
@@ -274,7 +280,11 @@ def dashboard_03_interativo() -> None:
     """Grade 2×3 com o top 5 vendedores por loja em faturamento."""
     df_vendas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT id_funcionario, loja_nome, subtotal, id_pedido "
+            "FROM vw_vendas_itens WHERE status != 'Cancelado' "
+            "AND id_funcionario IS NOT NULL"
+        ),
     )
     df_equipe = carregar_dados(
         nome_csv="equipe_lojas_tratado.csv",
@@ -356,11 +366,17 @@ def dashboard_04_interativo() -> None:
     """Série temporal mensal: bruto + líquido (eixo esq.) e cancelamentos."""
     df_ativas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_faturamento_mensal",
+        query_sql=(
+            "SELECT ano, mes, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
     df_cancelados = carregar_dados(
         nome_csv="vendas_cancelados.csv",
-        query_sql="SELECT * FROM vw_faturamento_mensal",
+        query_sql=(
+            "SELECT ano, mes, subtotal FROM vw_vendas_itens "
+            "WHERE status = 'Cancelado'"
+        ),
     )
 
     bruto = (
@@ -466,7 +482,10 @@ def dashboard_05_interativo() -> None:
     """Barras por categoria + curva de Pareto acumulada com referência em 80%."""
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_categorias",
+        query_sql=(
+            "SELECT categoria_pai, subtotal FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     categorias = (
@@ -549,7 +568,10 @@ def dashboard_06_interativo() -> None:
     """Top 20 produtos: faturamento (barras) e ticket médio (linha)."""
     df = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_ranking_produtos",
+        query_sql=(
+            "SELECT produto_nome, subtotal, id_pedido FROM vw_vendas_itens "
+            "WHERE status != 'Cancelado'"
+        ),
     )
 
     resumo = (
@@ -636,7 +658,10 @@ def dashboard_07_interativo() -> None:
     )
     df_vendas = carregar_dados(
         nome_csv="vendas_tratado.csv",
-        query_sql="SELECT * FROM vw_vendas_canal",
+        query_sql=(
+            "SELECT id_cliente, id_pedido, data_pedido, subtotal "
+            "FROM vw_vendas_itens WHERE status != 'Cancelado'"
+        ),
     )
 
     df = df_vendas.merge(

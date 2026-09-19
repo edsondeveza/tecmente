@@ -52,6 +52,75 @@ log = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURAÇÕES
+FAIXA_PRECO: dict[str, tuple[float, float]] = {
+    "LOW": (0.45, 0.55),  # itens baratos/volume — margem alta (%)
+    "MID": (0.38, 0.48),  # periféricos — margem média
+    "HIGH": (0.30, 0.40),  # hardware intermediário — margem menor
+    "ULTRA": (0.22, 0.32),  # premium — margem % baixa, valor absoluto alto
+}
+# Ajuste de margem (pontos percentuais) por grupo de categoria.
+# Cria variação realista de lucratividade entre categorias.
+AJUSTE_CATEGORIA: dict[str, float] = {
+    "Cabos e Adaptadores": 0.04,
+    "Energia": 0.03,
+    "Eletrodomésticos": 0.02,
+    "Periféricos": 0.01,
+    "Armazenamento Portátil": 0.00,
+    "Hardware": -0.01,
+    "Redes": -0.01,
+    "Impressão": 0.00,
+    "Automação Comercial": -0.02,
+    "Telefonia e VoIP": 0.02,
+    "TVs e Displays": -0.03,
+    "Câmeras e Segurança": 0.01,
+    "Notebooks e Laptops": -0.02,
+    "Tablets": 0.00,
+}
+
+# Fator de volume de vendas por dia da semana (ISO: 0 = segunda, 6 = domingo).
+# Loja física e B2B concentram compras em dias úteis, com domingo mais fraco.
+SAZONALIDADE_SEMANA: dict[int, float] = {
+    0: 1.06,  # segunda
+    1: 1.08,  # terça
+    2: 1.08,  # quarta
+    3: 1.06,  # quinta
+    4: 1.04,  # sexta
+    5: 0.95,  # sábado
+    6: 0.73,  # domingo
+}
+
+# Peso relativo de clientes por UF — concentração regional realista:
+# SP/MG (onde ficam as lojas) lideram, com capilaridade nas demais UFs.
+PESOS_ESTADOS: dict[str, float] = {
+    "SP": 26.0,
+    "MG": 12.0,
+    "RJ": 9.0,
+    "PR": 6.0,
+    "RS": 6.0,
+    "SC": 5.0,
+    "BA": 4.5,
+    "GO": 3.5,
+    "PE": 3.5,
+    "DF": 3.0,
+    "ES": 2.5,
+    "CE": 2.5,
+    "MT": 2.0,
+    "MS": 2.0,
+    "PA": 2.0,
+    "AM": 1.5,
+    "MA": 1.5,
+    "PB": 1.5,
+    "RN": 1.5,
+    "PI": 1.0,
+    "AL": 1.0,
+    "SE": 1.0,
+    "TO": 1.0,
+    "RO": 0.5,
+    "AC": 0.5,
+    "AP": 0.5,
+    "RR": 0.5,
+}
+
 # =============================================================================
 
 fake = Faker("pt_BR")
@@ -745,7 +814,7 @@ PRODUTOS_BASE: list[tuple[str, str, float, str]] = [
         "Redes > Adaptadores de Rede",
     ),
     ("71010", "Cabo de Rede RJ-45 5m Cat6 Azul", 28.99, "Redes > Cabos de Rede"),
-    ("71011", "Cabo de Rede RJ-45 10m Cat6", 49.99, "Redes > Cabos de Rede"),
+    ("71011", "Cabo de Rede RJ-45 10m Cat6", 59.99, "Redes > Cabos de Rede"),
     # ── Cabos e Adaptadores ───────────────────────────────────────────────────
     ("72001", "Cabo HDMI 2.0 4K 1.8m Goldplated", 24.99, "Cabos e Adaptadores"),
     ("72002", "Cabo HDMI 2.0 4K 3m Goldplated", 39.99, "Cabos e Adaptadores"),
@@ -1127,6 +1196,38 @@ def _ticket(preco: float) -> str:
     if preco <= 900:
         return "HIGH"
     return "ULTRA"
+
+
+def _margem_bruta(preco: float, categoria_pai: str) -> float:
+    """Calcula a margem bruta (%) de um produto por faixa de preço e categoria.
+
+    Base: faixa de preço (itens baratos têm margem % maior; premium, menor).
+    Ajuste: pequena variação por grupo de categoria (lucratividade por mix).
+
+    Args:
+        preco:        Preço de venda do produto em reais.
+        categoria_pai: Grupo de categoria (ex.: ``'Hardware'``).
+
+    Returns:
+        Margem bruta como fração (0.22 = 22%).
+    """
+    lo, hi = FAIXA_PRECO[_ticket(preco)]
+    margem = random.uniform(lo, hi) + AJUSTE_CATEGORIA.get(categoria_pai, 0.0)
+    return round(min(max(margem, 0.10), 0.70), 4)
+
+
+def _custo_unitario(preco: float, categoria_pai: str) -> float:
+    """Gera o custo unitário a partir de uma margem bruta determinada por faixa/categoria.
+
+    Args:
+        preco:          Preço de venda do produto em reais.
+        categoria_pai:  Grupo de categoria do produto.
+
+    Returns:
+        Custo unitário (preço × (1 − margem)).
+    """
+    margem = _margem_bruta(preco, categoria_pai)
+    return round(preco * (1 - margem), 2)
 
 
 # Sobrenomes brasileiros usados na composição de razões sociais PJ.
@@ -1991,7 +2092,7 @@ def popular_produtos(
 
     Não depende de nenhum arquivo externo. Para cada produto:
     - Extrai a hierarquia de categoria do campo ``"Pai > Filho"``
-    - Gera o custo unitário como 52–68% do preço de venda
+    - Gera o custo unitário a partir da margem bruta por faixa/categoria
     - Gera a descrição usando o template da categoria via :func:`gerar_descricao`
 
     Identifica os "produtos populares" usando distribuição de Pareto:
@@ -2005,7 +2106,7 @@ def popular_produtos(
     Returns:
         Tupla ``(prods, populares)`` onde:
 
-        - ``prods``     : lista de ``(id_produto, preco_venda)``
+        - ``prods``     : lista de ``(id_produto, preco_venda, preco_custo)``
         - ``populares`` : conjunto de IDs de produtos com alta demanda
     """
     # Extrai categorias únicas do catálogo e insere no banco
@@ -2030,8 +2131,8 @@ def popular_produtos(
     # Monta lista de produtos com descrição gerada por template
     produtos_db = []
     for sku, nome, preco, cat_raw in PRODUTOS_BASE:
-        custo = round(preco * random.uniform(0.52, 0.68), 2)
-        _, filho = cats.get(cat_raw, ("Geral", "Geral"))
+        pai, filho = cats.get(cat_raw, ("Geral", "Geral"))
+        custo = _custo_unitario(preco, pai)
         id_cat = cat_map.get(filho, 1)
         descricao = gerar_descricao(nome, cat_raw)
         produtos_db.append(
@@ -2049,8 +2150,8 @@ def popular_produtos(
             produtos_db[i : i + 500],
         )
 
-    cur.execute("SELECT id_produto, preco_venda FROM produto")
-    prods = [(id_, float(p)) for id_, p in cur.fetchall()]
+    cur.execute("SELECT id_produto, preco_venda, preco_custo FROM produto")
+    prods = [(id_, float(p), float(c)) for id_, p, c in cur.fetchall()]
 
     # Distribuição de Pareto: 20% mais baratos + amostra dos mais caros
     ordenados = sorted(prods, key=lambda x: x[1])
@@ -2075,7 +2176,7 @@ def popular_estoque(
 
     Args:
         cur:       Cursor MySQL ativo.
-        prods:     Lista de ``(id_produto, preco_venda)``.
+        prods:     Lista de ``(id_produto, preco_venda, preco_custo)``.
         populares: Conjunto de IDs de produtos com alta rotatividade.
         loja_ids:  Lista de IDs de lojas.
     """
@@ -2085,7 +2186,7 @@ def popular_estoque(
     dados = []
     hoje = datetime.now().date()
 
-    for id_prod, preco in prods:
+    for id_prod, preco, _custo in prods:
         base = estoque_base[_ticket(preco)]
         for id_loja in loja_ids:
             qtd = int(base * random.uniform(0.3, 1.7))
@@ -2206,7 +2307,12 @@ def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
     for i in range(NUM_CLIENTES):
         pj = random.random() < PROPORCAO_PJ
         tipo = "PJ" if pj else "PF"
-        cidade, estado = (fake.city(), fake.state_abbr())
+        # Concentração geográfica regional (SP/MG têm peso maior, demais UFs
+        # com capilaridade) — estados sorteados pela ponderação configurada.
+        estados = list(PESOS_ESTADOS)
+        pesos = list(PESOS_ESTADOS.values())
+        estado = random.choices(estados, weights=pesos, k=1)[0]
+        cidade, estado = (fake.city(), estado)
 
         # Cadastro alinhado aos pedidos: a maioria se registra ANTES da janela
         # de pedidos (DATA_INICIO), então as compras seguem o cadastro. Uma
@@ -2293,12 +2399,14 @@ def popular_pedidos(
     Aplica sazonalidade via ``SAZONALIDADE``, com amostragem por
     rejeição: meses com boost menor geram menos pedidos naturalmente.
 
-    Clientes PJ recebem descontos de 7–18% e fazem pedidos maiores.
+    Pedidos PJ contêm no mínimo 5 produtos distintos (uma linha por
+    produto); o desconto é calculado no nível do pedido conforme o tipo
+    de loja (3% Física, 5% Online).
     Novembro tem taxa de cancelamento ligeiramente maior (Black Friday).
 
     Args:
         cur:           Cursor MySQL ativo.
-        prods:         Lista de ``(id_produto, preco_venda)``.
+        prods:         Lista de ``(id_produto, preco_venda, preco_custo)``.
         populares:     Conjunto de IDs de produtos com alta demanda.
         vend_por_loja: Dicionário ``{id_loja: [id_funcionario, ...]}``.
         pf_ids:        IDs de clientes Pessoa Física.
@@ -2322,14 +2430,14 @@ def popular_pedidos(
     normais = [c for c in pool if c not in super_ativos and c not in inativos]
 
     # Índice de produtos agrupados por faixa para seleção eficiente
-    por_ticket: dict[str, list[tuple[int, float]]] = {
+    por_ticket: dict[str, list[tuple[int, float, float]]] = {
         "LOW": [],
         "MID": [],
         "HIGH": [],
         "ULTRA": [],
     }
-    for pid, preco in prods:
-        por_ticket[_ticket(preco)].append((pid, preco))
+    for pid, preco, custo in prods:
+        por_ticket[_ticket(preco)].append((pid, preco, custo))
 
     gerados = 0
     ped_buf: list[tuple] = []
@@ -2359,10 +2467,11 @@ def popular_pedidos(
 
         pj = id_cli in pj_ids
 
-        # Aplica sazonalidade por amostragem por rejeição
+        # Aplica sazonalidade por amostragem por rejeição (mensal × dia da semana)
         dias = random.randint(0, 729)
         data = DATA_INICIO + timedelta(days=dias)
         boost = SAZONALIDADE.get(data.month, 1.0)
+        boost *= SAZONALIDADE_SEMANA.get(data.weekday(), 1.0)
         if random.random() > boost / 1.80:
             continue  # rejeita pedido fora da curva sazonal
 
@@ -2380,8 +2489,14 @@ def popular_pedidos(
             else None
         )
 
-        # Compõe itens do pedido com preferência por produtos populares
-        n_itens = random.randint(2, 10) if pj else random.randint(1, 4)
+        # Percentual de desconto baseado no tipo de loja
+        # Física: 3%, Online: 5%
+        percentual_desconto = 0.03 if tipo_loja == "Física" else 0.05
+
+        # Compõe itens do pedido com preferência por produtos populares.
+        # Cada produto entra no máximo uma vez por pedido (produtos distintos);
+        # Clientes PJ devem ter no mínimo 5 produtos diferentes.
+        n_itens = random.randint(5, 10) if pj else random.randint(1, 4)
         tickets = random.choices(
             ["LOW", "MID", "HIGH", "ULTRA"],
             weights=[20, 45, 30, 5] if pj else [40, 35, 20, 5],
@@ -2390,20 +2505,30 @@ def popular_pedidos(
 
         itens: list[tuple] = []
         total = 0.0
+        escolhidos: set[int] = set()
 
         for tk in tickets:
             pool = por_ticket.get(tk, [])
             if not pool:
                 continue
 
+            # Exclui produtos já escolhidos no mesmo pedido
+            candidatos = [(p, pr, c) for p, pr, c in pool if p not in escolhidos]
+
             # 60% de chance de selecionar produto popular da faixa
             if random.random() < 0.60 and populares:
-                pop_tk = [(p, pr) for p, pr in pool if p in populares]
+                pop_tk = [(p, pr, c) for p, pr, c in candidatos if p in populares]
                 if pop_tk:
-                    pool = pop_tk
+                    candidatos = pop_tk
 
-            id_prod, preco_tab = random.choice(pool)
-            custo = round(preco_tab * random.uniform(0.52, 0.68), 2)
+            # Fallback: produto não escolhido de qualquer faixa
+            if not candidatos:
+                candidatos = [(p, pr, c) for p, pr, c in prods if p not in escolhidos]
+            if not candidatos:
+                continue
+
+            id_prod, preco_tab, custo = random.choice(candidatos)
+            escolhidos.add(id_prod)
 
             # Quantidade coerente com a faixa de preço e o tipo de cliente
             qtd_por_ticket = {
@@ -2414,16 +2539,11 @@ def popular_pedidos(
             }
             qtd = qtd_por_ticket[tk]
 
-            # PJ recebe desconto por volume; PF tem pequena variação de preço
-            if pj:
-                preco_unit = round(preco_tab * random.uniform(0.82, 0.93), 2)
-            else:
-                preco_unit = round(preco_tab * random.uniform(0.97, 1.02), 2)
-
+            # Preço de tabela (sem desconto no item)
+            # O desconto será aplicado no nível do pedido, baseado no tipo de loja
+            preco_unit = preco_tab
             total += qtd * preco_unit
-            # Desconto declarado por item (percentual sobre o preço de tabela)
-            desconto_item = round(max(0.0, 1 - preco_unit / preco_tab), 2)
-            itens.append((id_prod, qtd, preco_unit, custo, desconto_item))
+            itens.append((id_prod, qtd, preco_unit, custo))
 
         if not itens:
             continue
@@ -2437,8 +2557,10 @@ def popular_pedidos(
             weights=pesos_status,
         )[0]
 
-        # PJ pode receber desconto global de até 5% no valor do pedido
-        desconto = round(total * random.uniform(0, 0.05), 2) if pj else 0.0
+        # Desconto baseado no tipo de loja: Física = 3%, Online = 5%
+        valor_bruto = round(total, 2)
+        valor_desconto = round(valor_bruto * percentual_desconto, 2)
+        valor_final = round(valor_bruto - valor_desconto, 2)
 
         obs = random.choice(textos_obs) if random.random() < RUIDO_OBS else None
         ped_buf.append(
@@ -2449,8 +2571,8 @@ def popular_pedidos(
                 data,
                 status,
                 canal,
-                round(total, 2),
-                desconto,
+                valor_final,
+                valor_desconto,
                 obs,
             )
         )
@@ -2499,17 +2621,17 @@ def _flush(cur, peds: list[tuple], items: list[list[tuple]]) -> None:
 
     # Achata itens mantendo o vínculo correto com o id_pedido de cada um
     rows_itens = [
-        (id_ped, id_prod, qtd, preco, custo, desconto_item)
+        (id_ped, id_prod, qtd, preco, custo)
         for id_ped, itens in zip(pedido_ids, items)
-        for id_prod, qtd, preco, custo, desconto_item in itens
+        for id_prod, qtd, preco, custo in itens
     ]
 
     if rows_itens:
         cur.executemany(
             "INSERT INTO pedido_item "
             "(id_pedido, id_produto, quantidade, preco_unitario, "
-            "custo_unitario, desconto_item) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "custo_unitario) "
+            "VALUES (%s, %s, %s, %s, %s)",
             rows_itens,
         )
 
@@ -2570,8 +2692,14 @@ def main() -> None:
         log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
         log.info("Pedidos   : %d", NUM_PEDIDOS)
         log.info("Populares : %d produtos", len(populares))
-        log.info("Views disponíveis: vw_faturamento_mensal | vw_ranking_produtos")
-        log.info("                    vw_rfm | vw_vendas_canal | vw_categorias")
+        log.info(
+            "Views disponíveis: vw_faturamento_mensal | vw_ranking_produtos | "
+            "vw_clientes | vw_vendas_itens"
+        )
+        log.info(
+            "                    vw_rfm | vw_vendas_canal | vw_categorias "
+            "| vw_pedidos | vw_pedidos_itens"
+        )
 
     except mysql.connector.Error as e:
         log.error("Erro MySQL: %s", e)
