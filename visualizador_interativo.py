@@ -25,8 +25,7 @@ Autor: Edson Deveza
 Versão: 1.0 (Fase 2 — Plotly)
 """
 
-from __future__ import annotations
-
+import argparse
 import logging
 import sys
 
@@ -34,15 +33,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-import visualizador  # fonte única de FONTE (definida em visualizador.py)
-from visualizador import (
+import visualizador  # fonte única de FONTE/paleta (reexporta tecmente.dados)
+from tecmente.dados import (
     CAMINHO_BASE,
+    carregar_dados,
+    fonte_atual,
+    resolver_caminho_dados,
+)
+from visualizador import (
     CAMINHO_RELATORIOS,
     PALETA,
     SEQUENCIA_CORES,
-    carregar_dados,
     garantir_diretorios,
-    resolver_caminho_dados,
 )
 
 logging.basicConfig(
@@ -794,10 +796,23 @@ def dashboard_07_interativo() -> None:
 
 def main() -> None:
     """Gera todos os dashboards interativos (Plotly) em HTML."""
-    log.info("=" * 60)
-    log.info(
-        "TecMente — Visualizador Interativo  |  Fonte: %s", visualizador.FONTE.upper()
+    parser = argparse.ArgumentParser(description="Visualizador Interativo — TecMente")
+    parser.add_argument(
+        "--fonte",
+        type=str,
+        choices=["csv", "sql"],
+        help="Fonte de dados: 'csv' (tratado) ou 'sql' (banco MySQL).",
     )
+    parser.add_argument(
+        "--dados",
+        type=str,
+        help="Diretório raiz dos dados (onde ficam as pastas *_tratado).",
+    )
+    args = parser.parse_args()
+    visualizador.configurar(fonte=args.fonte, base=args.dados)
+
+    log.info("=" * 60)
+    log.info("TecMente — Visualizador Interativo  |  Fonte: %s", fonte_atual().upper())
     log.info("=" * 60)
 
     garantir_diretorios()

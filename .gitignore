@@ -10,6 +10,12 @@ __pycache__/
 *$py.class
 *.so
 
+# Caches e cobertura
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.coverage.*
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

@@ -321,13 +321,13 @@ def tratar_clientes(
     # ── 5. Correção e validação de e-mail ──────────────────────────────────
     # apply() retorna uma série de tuplas (email_corrigido, válido).
     # zip(*...) desempacota as tuplas em duas listas separadas.
+    emails_origem = df["email"].copy()
     resultados_email = df["email"].apply(corrigir_email)
     df["email"] = [r[0] for r in resultados_email]
     df["email_valido"] = [r[1] for r in resultados_email]
 
-    emails_corrigidos = (
-        df["email"].str.endswith(".com") & df["email"].str.contains("@")
-    ).sum()
+    # Conta apenas as correções reais (.con→.com) — diff do valor original.
+    emails_corrigidos = int((emails_origem != df["email"]).sum())
 
     # ── 6. Cálculos de negócio ─────────────────────────────────────────────
     # datetime.now() retorna o momento atual.
@@ -464,6 +464,11 @@ def tratar_vendas(
     mask_cancelado = df["status"] == "Cancelado"
     df_cancelados = df[mask_cancelado].copy()
     df_ativos = df[~mask_cancelado].copy()
+    df_cancelados = df[mask_cancelado].copy()
+    # id_funcionario é NULL nos canais online → float64 com NaN na extração.
+    # Converte para nullable integer (Int64) para o CSV sair sem casa decimal.
+    df_ativos["id_funcionario"] = df_ativos["id_funcionario"].astype("Int64")
+    df_cancelados["id_funcionario"] = df_cancelados["id_funcionario"].astype("Int64")
 
     df_cancelados.to_csv(caminho_cancelados, index=False, encoding=ENCODING)
     df_ativos.to_csv(caminho_saida, index=False, encoding=ENCODING)

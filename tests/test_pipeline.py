@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from pipeline import executar_etapa
-from visualizador import resolver_caminho_dados
+from tecmente.dados import resolver_caminho_dados
 
 # =============================================================================
 # resolver_caminho_dados (visualizador) — lógica reutilizada pelo pipeline

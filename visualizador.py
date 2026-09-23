@@ -32,6 +32,7 @@ Versão: 1.2.0 — caminho de dados relativo ao script (2026-03-20)
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 from pathlib import Path
@@ -41,7 +42,8 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.patches import Patch
 
-from config import DB_CONFIG, ENCODING
+# Fonte única de dados (pasta/CSV/SQL) e configurações injetáveis
+from tecmente.dados import carregar_dados, configurar, fonte_atual
 
 # ---------------------------------------------------------------------------
 # Configuração de logging
@@ -58,11 +60,8 @@ log = logging.getLogger(__name__)
 # Configurações globais
 # ---------------------------------------------------------------------------
 
-# Chaveamento de fonte: "csv" ou "sql"
-FONTE: str = "csv"
-
-# Diretório raiz dos dados — relativo ao próprio script
-CAMINHO_BASE: Path = Path(__file__).parent / "data"
+# Chaveamento de fonte/pasta: injetáveis via dados.configurar()/parâmetros.
+# FONTE/CAMINHO_BASE reexportados de tecmente.dados (fonte única).
 
 # Diretórios de saída — relativos ao diretório do script
 CAMINHO_GRAFICOS: Path = Path(__file__).parent / "output" / "graficos"
@@ -95,36 +94,6 @@ SEQUENCIA_CORES: list[str] = [
     "#117A65",  # verde-escuro
     "#D35400",  # laranja
 ]
-
-# ---------------------------------------------------------------------------
-# Resolução dinâmica do caminho de dados
-# ---------------------------------------------------------------------------
-
-
-def resolver_caminho_dados(base: Path) -> Path:
-    """Retorna a pasta _tratado mais recente dentro do diretório base.
-
-    Procura por subpastas com o padrão YYYY-MM-DD_tratado e retorna
-    a mais recente por ordem alfabética (equivalente à cronológica,
-    dado que o formato de data é ISO 8601).
-
-    Args:
-        base: Diretório raiz onde ficam as pastas de extração.
-
-    Returns:
-        Path da pasta _tratado mais recente encontrada.
-
-    Raises:
-        FileNotFoundError: Se nenhuma pasta _tratado for encontrada.
-    """
-
-    pastas = sorted(base.glob("*_tratado"), reverse=True)
-    if not pastas:
-        raise FileNotFoundError(f"Nenhuma pasta '_tratado' encontrada em: {base}")
-    escolhida = pastas[0]
-    log.info("Pasta de dados resolvida: %s", escolhida)
-    return escolhida
-
 
 # ---------------------------------------------------------------------------
 # Estilo global do Matplotlib
@@ -180,60 +149,21 @@ def salvar_figura(fig: plt.Figure, nome_arquivo: str) -> None:  # type: ignore
 
 
 # ---------------------------------------------------------------------------
-# Carregamento de dados — chaveamento CSV / SQL
+# Carregamento de dados — delegado a tecmente.dados (single source)
 # ---------------------------------------------------------------------------
 
 
-def carregar_dados(
-    nome_csv: str,
-    query_sql: str | None = None,
-) -> pd.DataFrame:
-    """Carrega dados da fonte configurada em FONTE.
-
-    Quando FONTE = "csv": lê o arquivo CSV tratado em CAMINHO_DADOS.
-    Quando FONTE = "sql": executa query_sql contra o banco MySQL.
-
-    Args:
-        nome_csv:  Nome do arquivo CSV (com extensão). Ex.: "vendas_tratado.csv".
-        query_sql: Query SQL a executar quando FONTE = "sql". Obrigatória
-                   se FONTE = "sql"; ignorada caso contrário.
-
-    Returns:
-        DataFrame com os dados carregados.
-
-    Raises:
-        ValueError: Se FONTE = "sql" e query_sql não for fornecida.
-       FileNotFoundError: Se FONTE = "csv" e o arquivo não existir.
-    """
-
-    if FONTE == "csv":
-        # Resolvido aqui (lazy) — evitando efeito colateral no import.
-        pasta_dados = resolver_caminho_dados(CAMINHO_BASE)
-        caminho = pasta_dados / nome_csv
-        if not caminho.exists():
-            raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
-        log.info("Lendo CSV: %s", caminho)
-        return pd.read_csv(caminho, sep=",", encoding=ENCODING)
-
-    if FONTE == "sql":
-        if not query_sql:
-            raise ValueError("query_sql é obrogatória quando FONTE = 'sql'.")
-        try:
-            import mysql.connector  # type: ignore
-        except ImportError as exc:
-            raise ImportError(
-                "mysql-connector-python não instalado. "
-                "Execute: poetry add mysql-connector-python"
-            ) from exc
-        log.info("Consultando banco de dados...")
-        conn = mysql.connector.connect(**DB_CONFIG)
-        try:
-            df = pd.read_sql(query_sql, conn)
-        finally:
-            conn.close()
-        return df
-
-    raise ValueError(f"FONTE inválida: '{FONTE}'. Use 'csv' ou 'sql'.")
+def dashboards_disponiveis() -> list[str]:
+    """Nomes dos dashboards habilitados, na ordem de execução."""
+    return [
+        "d01_faturamento_por_loja",
+        "d02_total_por_unidade",
+        "d03_top_vendedores",
+        "d04_faturamento_mensal",
+        "d05_faturamento_por_categoria",
+        "d06_produtos_ticket_medio",
+        "d07_rfm",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1326,22 +1256,38 @@ def dashboard_07_rfm() -> None:
 
 def main() -> None:
     """Orquestra a geração de todos os dashboards."""
+    parser = argparse.ArgumentParser(description="Visualizador BI — TecMente")
+    parser.add_argument(
+        "--fonte",
+        type=str,
+        choices=["csv", "sql"],
+        help="Fonte de dados: 'csv' (tratado) ou 'sql' (banco MySQL).",
+    )
+    parser.add_argument(
+        "--dados",
+        type=str,
+        help="Diretório raiz dos dados (onde ficam as pastas *_tratado).",
+    )
+    args = parser.parse_args()
+    configurar(fonte=args.fonte, base=args.dados)
+
     log.info("=" * 60)
-    log.info("TecMente — Visualizador BI  |  Fonte: %s", FONTE.upper())
+    log.info("TecMente — Visualizador BI  |  Fonte: %s", fonte_atual().upper())
     log.info("=" * 60)
 
     configurar_estilo()
     garantir_diretorios()
 
-    dashboards = [
-        dashboard_01_faturamento_por_loja,
-        dashboard_02_total_por_unidade,
-        dashboard_03_top_vendedores,
-        dashboard_04_faturamento_mensal,
-        dashboard_05_faturamento_por_categoria,
-        dashboard_06_produtos_ticket_medio,
-        dashboard_07_rfm,
-    ]
+    mapeamento = {
+        "d01_faturamento_por_loja": dashboard_01_faturamento_por_loja,
+        "d02_total_por_unidade": dashboard_02_total_por_unidade,
+        "d03_top_vendedores": dashboard_03_top_vendedores,
+        "d04_faturamento_mensal": dashboard_04_faturamento_mensal,
+        "d05_faturamento_por_categoria": dashboard_05_faturamento_por_categoria,
+        "d06_produtos_ticket_medio": dashboard_06_produtos_ticket_medio,
+        "d07_rfm": dashboard_07_rfm,
+    }
+    dashboards = [mapeamento[nome] for nome in dashboards_disponiveis()]
 
     total = len(dashboards)
     erros: list[str] = []

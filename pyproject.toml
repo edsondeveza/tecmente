@@ -18,6 +18,9 @@ dependencies = [
     "python-dotenv (>=1.0.0)"
 ]
 
+[project.scripts]
+tecmente = "tecmente.tecmente_cli:main"
+
 [tool.poetry]
 packages = [{include = "tecmente", from = "src"}]
 
@@ -26,6 +29,7 @@ packages = [{include = "tecmente", from = "src"}]
 ipykernel = "^7.2.0"
 pytest = "^8.0.0"
 ruff = "^0.8.0"
+pytest-cov = ">=5.0.0,<7.0.0"
 
 [tool.ruff]
 # Padrão de estilo baseado no ruff format
@@ -46,6 +50,10 @@ select = ["E", "F", "I"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+addopts = "--cov=analise_bi --cov=previsor --cov=tratador --cov=pipeline --cov=tecmente.dados --cov-fail-under=40"
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -6,34 +6,48 @@ on:
   pull_request:
 
 jobs:
-  quality:
-    runs-on: ubuntu-latest
+  test:
+    name: Testes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ""
+          MYSQL_DATABASE: tecmente
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "poetry"
 
-      - name: Install Poetry
+      - name: Instalar Poetry
         uses: snok/install-poetry@v1
 
-      - name: Cache Poetry dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pypoetry
-          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: ${{ runner.os }}-poetry-
+      - name: Instalar dependências
+        run: poetry install --with dev
 
-      - name: Install dependencies
-        run: poetry install --no-interaction
+      - name: Lint (ruff)
+        run: poetry run ruff check .
 
-      - name: Lint (ruff check)
-        run: poetry run ruff check --exclude .venv .
+      - name: Formatação (ruff format)
+        run: poetry run ruff format --check .
 
-      - name: Format (ruff format --check)
-        run: poetry run ruff format --check --exclude .venv .
-
-      - name: Tests (pytest)
-        run: poetry run pytest -q
+      - name: Testes (pytest + cobertura)
+        run: poetry run pytest

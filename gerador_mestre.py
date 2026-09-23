@@ -34,6 +34,7 @@ Versão: 1.1
 
 from __future__ import annotations
 
+import argparse
 import logging
 import random
 import re
@@ -2376,6 +2377,160 @@ def popular_clientes(cur) -> tuple[list[int], list[int], dict[int, date]]:
     return pf_ids, pj_ids, recentes
 
 
+def _indice_por_ticket(
+    prods: list[tuple[int, float, float]],
+) -> dict[str, list[tuple[int, float, float]]]:
+    """Agrupa produtos por faixa de preço para seleção eficiente."""
+    por_ticket: dict[str, list[tuple[int, float, float]]] = {
+        "LOW": [],
+        "MID": [],
+        "HIGH": [],
+        "ULTRA": [],
+    }
+    for pid, preco, custo in prods:
+        por_ticket[_ticket(preco)].append((pid, preco, custo))
+    return por_ticket
+
+
+def _escolher_cliente(
+    super_ativos: set[int],
+    inativos: set[int],
+    normais: list[int],
+    pj_ids: list[int],
+    recentes: dict[int, date],
+    cadastro: dict[int, date] | None = None,
+) -> tuple[int, bool, bool] | None:
+    """Seleciona o cliente do pedido conforme o perfil comportamental.
+
+    Retorna ``(id_cliente, eh_pj, eh_anomalia)`` ou None para rejeitar
+    a iteração (nenhum cliente elegível).
+
+    Exemplo de anomalia: pedido poucos dias antes do cadastro do cliente
+    (registro recente), conforme ``RUIDO_PEDIDO_ANTES_CADASTRO``.
+    """
+    eh_anomalia = False
+    if random.random() < RUIDO_PEDIDO_ANTES_CADASTRO and recentes:
+        id_cli = random.choice(list(recentes))
+        eh_anomalia = True
+    else:
+        r = random.random()
+        if r < 0.40 and super_ativos:
+            id_cli = random.choice(list(super_ativos))
+        elif r < 0.43 and inativos:
+            id_cli = random.choice(list(inativos))
+        elif normais:
+            id_cli = random.choice(normais)
+        else:
+            return None
+    return id_cli, id_cli in pj_ids, eh_anomalia
+
+
+def _compor_itens(
+    por_ticket: dict[str, list[tuple[int, float, float]]],
+    prods: list[tuple[int, float, float]],
+    populares: set[int],
+    pj: bool,
+    escolhidos: set[int],
+) -> tuple[list[tuple], float]:
+    """Monta os itens de um pedido com preferência por produtos populares.
+
+    Cada produto entra no máximo uma vez por pedido; clientes PJ levam
+    no mínimo 5 produtos distintos com quantidades maiores.
+
+    Returns:
+        ``(itens, total)`` — itens como ``(id_produto, qtd, preco, custo)``
+        e o valor bruto somando ``qtd * preco``. ``itens`` vazio significa
+        pedido descartado.
+    """
+    n_itens = random.randint(5, 10) if pj else random.randint(1, 4)
+    tickets = random.choices(
+        ["LOW", "MID", "HIGH", "ULTRA"],
+        weights=[20, 45, 30, 5] if pj else [40, 35, 20, 5],
+        k=n_itens,
+    )
+
+    itens: list[tuple] = []
+    total = 0.0
+
+    for tk in tickets:
+        pool = por_ticket.get(tk, [])
+        if not pool:
+            continue
+
+        candidatos = [(p, pr, c) for p, pr, c in pool if p not in escolhidos]
+
+        if random.random() < 0.60 and populares:
+            pop_tk = [(p, pr, c) for p, pr, c in candidatos if p in populares]
+            if pop_tk:
+                candidatos = pop_tk
+
+        if not candidatos:
+            candidatos = [(p, pr, c) for p, pr, c in prods if p not in escolhidos]
+        if not candidatos:
+            continue
+
+        id_prod, preco_tab, custo = random.choice(candidatos)
+        escolhidos.add(id_prod)
+
+        qtd_por_ticket = {
+            "LOW": random.randint(5, 30) if pj else random.randint(1, 5),
+            "MID": random.randint(2, 10) if pj else random.randint(1, 3),
+            "HIGH": random.randint(1, 4) if pj else 1,
+            "ULTRA": 1,
+        }
+        qtd = qtd_por_ticket[tk]
+
+        preco_unit = preco_tab
+        total += qtd * preco_unit
+        itens.append((id_prod, qtd, preco_unit, custo))
+
+    return itens, total
+
+
+def carregar_dependencias_pedidos(
+    cur,
+) -> tuple[
+    list[tuple[int, float, float]],
+    set[int],
+    dict[int, list[int]],
+    list[int],
+    list[int],
+    dict[int, date],
+]:
+    """Lê do banco os dados necessários para gerar pedidos.
+
+    Útil no modo ``--pedidos``, quando a base (produtos, funcionários e
+    clientes) já existe e só a geração de pedidos será refeita.
+
+    Returns:
+        Tupla ``(prods, populares, vend_por_loja, pf_ids, pj_ids,
+        recentes)`` no mesmo formato de :func:`popular_produtos` e
+        :func:`popular_clientes`.
+    """
+    cur.execute("SELECT id_produto, preco_venda, preco_custo FROM produto")
+    prods = [(id_, float(p), float(c)) for id_, p, c in cur.fetchall()]
+
+    ordenados = sorted(prods, key=lambda x: x[1])
+    populares: set[int] = {p[0] for p in ordenados[: int(len(ordenados) * 0.20)]}
+    populares |= {
+        p[0] for p in random.sample(ordenados[-100:], min(50, len(ordenados)))
+    }
+
+    cur.execute("SELECT id_funcionario, id_loja FROM funcionario")
+    vend_por_loja: dict[int, list[int]] = {}
+    for id_func, id_loja in cur.fetchall():
+        vend_por_loja.setdefault(id_loja, []).append(id_func)
+
+    cur.execute("SELECT id_cliente, tipo, data_cadastro FROM cliente")
+    todas = cur.fetchall()
+    pf_ids = [r[0] for r in todas if r[1] == "PF"]
+    pj_ids = [r[0] for r in todas if r[1] == "PJ"]
+    recente_limiar = (datetime.now() - timedelta(days=90)).date()
+    recentes = {r[0]: r[2] for r in todas if r[2] >= recente_limiar}
+
+    return prods, populares, vend_por_loja, pf_ids, pj_ids, recentes
+
+
 def popular_pedidos(
     cur,
     prods: list[tuple[int, float]],
@@ -2427,15 +2582,7 @@ def popular_pedidos(
     )
     normais = [c for c in pool if c not in super_ativos and c not in inativos]
 
-    # Índice de produtos agrupados por faixa para seleção eficiente
-    por_ticket: dict[str, list[tuple[int, float, float]]] = {
-        "LOW": [],
-        "MID": [],
-        "HIGH": [],
-        "ULTRA": [],
-    }
-    for pid, preco, custo in prods:
-        por_ticket[_ticket(preco)].append((pid, preco, custo))
+    por_ticket = _indice_por_ticket(prods)
 
     gerados = 0
     ped_buf: list[tuple] = []
@@ -2449,23 +2596,10 @@ def popular_pedidos(
     while gerados < NUM_PEDIDOS:
         # Anomalia temporal controlada: ~2% dos pedidos vão para clientes
         # registrados recentemente, fazendo o pedido preceder o cadastro.
-        eh_anomalia = False
-        if random.random() < RUIDO_PEDIDO_ANTES_CADASTRO and recentes:
-            id_cli = random.choice(list(recentes))
-            eh_anomalia = True
-        else:
-            # Seleciona cliente com base no perfil comportamental
-            r = random.random()
-            if r < 0.40 and super_ativos:
-                id_cli = random.choice(list(super_ativos))
-            elif r < 0.43 and inativos:
-                id_cli = random.choice(list(inativos))
-            elif normais:
-                id_cli = random.choice(normais)
-            else:
-                continue
-
-        pj = id_cli in pj_ids
+        escolha = _escolher_cliente(super_ativos, inativos, normais, pj_ids, recentes)
+        if escolha is None:
+            continue
+        id_cli, pj, eh_anomalia = escolha
 
         # Aplica sazonalidade por amostragem por rejeição (mensal × dia da semana)
         if eh_anomalia:
@@ -2504,56 +2638,8 @@ def popular_pedidos(
         percentual_desconto = 0.03 if tipo_loja == "Física" else 0.05
 
         # Compõe itens do pedido com preferência por produtos populares.
-        # Cada produto entra no máximo uma vez por pedido (produtos distintos);
-        # Clientes PJ devem ter no mínimo 5 produtos diferentes.
-        n_itens = random.randint(5, 10) if pj else random.randint(1, 4)
-        tickets = random.choices(
-            ["LOW", "MID", "HIGH", "ULTRA"],
-            weights=[20, 45, 30, 5] if pj else [40, 35, 20, 5],
-            k=n_itens,
-        )
-
-        itens: list[tuple] = []
-        total = 0.0
         escolhidos: set[int] = set()
-
-        for tk in tickets:
-            pool = por_ticket.get(tk, [])
-            if not pool:
-                continue
-
-            # Exclui produtos já escolhidos no mesmo pedido
-            candidatos = [(p, pr, c) for p, pr, c in pool if p not in escolhidos]
-
-            # 60% de chance de selecionar produto popular da faixa
-            if random.random() < 0.60 and populares:
-                pop_tk = [(p, pr, c) for p, pr, c in candidatos if p in populares]
-                if pop_tk:
-                    candidatos = pop_tk
-
-            # Fallback: produto não escolhido de qualquer faixa
-            if not candidatos:
-                candidatos = [(p, pr, c) for p, pr, c in prods if p not in escolhidos]
-            if not candidatos:
-                continue
-
-            id_prod, preco_tab, custo = random.choice(candidatos)
-            escolhidos.add(id_prod)
-
-            # Quantidade coerente com a faixa de preço e o tipo de cliente
-            qtd_por_ticket = {
-                "LOW": random.randint(5, 30) if pj else random.randint(1, 5),
-                "MID": random.randint(2, 10) if pj else random.randint(1, 3),
-                "HIGH": random.randint(1, 4) if pj else 1,
-                "ULTRA": 1,
-            }
-            qtd = qtd_por_ticket[tk]
-
-            # Preço de tabela (sem desconto no item)
-            # O desconto será aplicado no nível do pedido, baseado no tipo de loja
-            preco_unit = preco_tab
-            total += qtd * preco_unit
-            itens.append((id_prod, qtd, preco_unit, custo))
+        itens, total = _compor_itens(por_ticket, prods, populares, pj, escolhidos)
 
         if not itens:
             continue
@@ -2657,7 +2743,25 @@ def main() -> None:
     Cada etapa é comitada individualmente para facilitar o diagnóstico em
     caso de falha: se a geração de pedidos falhar, os dados base já estarão
     persistidos e podem ser inspecionados diretamente no banco.
+
+    Modos parciais (úteis em iteração de desenvolvimento):
+    - ``--clientes``: popula base + produtos/estoque/funcionários + clientes.
+    - ``--pedidos``:  gera apenas pedidos, reaproveitando o que já existe.
     """
+    parser = argparse.ArgumentParser(description="Gerador Mestre — TecMente")
+    grupo = parser.add_mutually_exclusive_group()
+    grupo.add_argument(
+        "--clientes",
+        action="store_true",
+        help="Popula apenas as dimensões e clientes (sem pedidos).",
+    )
+    grupo.add_argument(
+        "--pedidos",
+        action="store_true",
+        help="Gera apenas pedidos, usando base/clientes já existentes no banco.",
+    )
+    args = parser.parse_args()
+
     log.info("=" * 55)
     log.info("TecMente — Gerador Mestre v1.1")
     log.info("=" * 55)
@@ -2667,49 +2771,61 @@ def main() -> None:
         conn = mysql.connector.connect(**DB_CONFIG)
         cur = conn.cursor(buffered=True)
 
-        log.info("Limpando tabelas...")
-        limpar(cur)
-        conn.commit()
+        if not args.pedidos:
+            log.info("Limpando tabelas...")
+            limpar(cur)
+            conn.commit()
 
-        log.info("Populando base (lojas, departamentos, fornecedores)...")
-        loja_ids, forn_ids = popular_base(cur)
-        conn.commit()
+            log.info("Populando base (lojas, departamentos, fornecedores)...")
+            loja_ids, forn_ids = popular_base(cur)
+            conn.commit()
 
-        log.info("Populando produtos e categorias...")
-        prods, populares = popular_produtos(cur, forn_ids)
-        conn.commit()
+            log.info("Populando produtos e categorias...")
+            prods, populares = popular_produtos(cur, forn_ids)
+            conn.commit()
 
-        log.info("Populando estoque...")
-        popular_estoque(cur, prods, populares, loja_ids)
-        conn.commit()
+            log.info("Populando estoque...")
+            popular_estoque(cur, prods, populares, loja_ids)
+            conn.commit()
 
-        log.info("Populando funcionários...")
-        vend = popular_funcionarios(cur, loja_ids)
-        conn.commit()
+            log.info("Populando funcionários...")
+            vend = popular_funcionarios(cur, loja_ids)
+            conn.commit()
 
-        log.info("Populando clientes...")
-        pf_ids, pj_ids, recentes = popular_clientes(cur)
-        conn.commit()
+            log.info("Populando clientes...")
+            pf_ids, pj_ids, recentes = popular_clientes(cur)
+            conn.commit()
+        else:
+            log.info("Modo --pedidos: lendo dependências existentes...")
+            prods, populares, vend, pf_ids, pj_ids, recentes = (
+                carregar_dependencias_pedidos(cur)
+            )
 
-        log.info("Gerando %d pedidos...", NUM_PEDIDOS)
-        popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids, recentes)
-        conn.commit()
+        if args.clientes:
+            log.info("=" * 55)
+            log.info("Base e clientes populados (sem pedidos) com sucesso!")
+            log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
+            log.info("=" * 55)
+        else:
+            log.info("Gerando %d pedidos...", NUM_PEDIDOS)
+            popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids, recentes)
+            conn.commit()
 
-        log.info("=" * 55)
-        log.info("Banco populado com sucesso!")
-        log.info("=" * 55)
-        log.info("Produtos  : %d", len(prods))
-        log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
-        log.info("Pedidos   : %d", NUM_PEDIDOS)
-        log.info("Populares : %d produtos", len(populares))
-        log.info(
-            "Views disponíveis: vw_faturamento_mensal | vw_ranking_produtos | "
-            "vw_clientes | vw_vendas_itens"
-        )
-        log.info(
-            "                    vw_rfm | vw_vendas_canal | vw_categorias "
-            "| vw_pedidos | vw_pedidos_itens"
-        )
+            log.info("=" * 55)
+            log.info("Banco populado com sucesso!")
+            log.info("=" * 55)
+            log.info("Produtos  : %d", len(prods))
+            log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
+            log.info("Pedidos   : %d", NUM_PEDIDOS)
+            log.info("Populares : %d produtos", len(populares))
+            log.info(
+                "Views disponíveis: vw_faturamento_mensal | vw_ranking_produtos | "
+                "vw_clientes | vw_vendas_itens"
+            )
+            log.info(
+                "                    vw_rfm | vw_vendas_canal | vw_categorias "
+                "| vw_pedidos | vw_pedidos_itens"
+            )
 
     except mysql.connector.Error as e:
         log.error("Erro MySQL: %s", e)

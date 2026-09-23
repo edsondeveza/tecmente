@@ -46,6 +46,7 @@ Versão: 1.0
 from __future__ import annotations
 
 import argparse
+import itertools
 import logging
 import sys
 from datetime import datetime
@@ -55,7 +56,8 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 
-from visualizador import CAMINHO_BASE, CAMINHO_GRAFICOS, resolver_caminho_dados
+from tecmente.dados import CAMINHO_BASE, resolver_caminho_dados
+from visualizador import CAMINHO_GRAFICOS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -228,6 +230,22 @@ def ltv_segmentos(vendas: pd.DataFrame, clientes: pd.DataFrame) -> pd.DataFrame:
     agrupado["ltv_medio"] = (agrupado["receita_liquida"] / agrupado["clientes"]).round(
         2
     )
+    # LTV anualizado: normaliza a contribuição temporal para comparar
+    # segmentos com vintages diferentes (clientes de 10 anos vs de 1 ano).
+    data_ref = ativas["data_pedido"].max()
+    primeiro_pedido = ativas.groupby("id_cliente")["data_pedido"].min()
+    anos_cli = ((data_ref - primeiro_pedido).dt.days / 365.25).rename(
+        "anos_antiguidade"
+    )
+    seg_usado = seg.merge(anos_cli, on="id_cliente", how="left")
+    anos_segmento = seg_usado.groupby(["tipo", "canal"], as_index=False).agg(
+        anos_antiguidade=("anos_antiguidade", "mean")
+    )
+    agrupado = agrupado.merge(anos_segmento, on=["tipo", "canal"], how="left")
+    agrupado["anos_antiguidade"] = agrupado["anos_antiguidade"].clip(lower=1.0)
+    agrupado["ltv_anual_medio"] = (
+        agrupado["ltv_medio"] / agrupado["anos_antiguidade"]
+    ).round(2)
 
     _salvar_csv(agrupado, "ltv_segmentos.csv")
     log.info(
@@ -288,9 +306,9 @@ def rfm_rotulado(
     rfm["r_score"] = _score(rfm["recencia"])
     rfm["f_score"] = _score(rfm["frequencia"])
     rfm["m_score"] = _score(rfm["monetario"])
-    rfm["rfm_total"] = rfm["r_score"] + rfm["f_score"] + rfm["m_score"]
     # Recência é invertida: quanto menor o score, mais distante é o cliente.
     rfm["r_score"] = 6 - rfm["r_score"]
+    rfm["rfm_total"] = rfm["r_score"] + rfm["f_score"] + rfm["m_score"]
 
     condicoes = [
         (rfm["rfm_total"] >= 13) & (rfm["f_score"] >= 4),
@@ -373,29 +391,40 @@ def afinidade_cesta(vendas: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
     Returns:
         DataFrame com produto_a, produto_b, co_ocorrencias e receita_conjunta.
     """
-    ativas = vendas[vendas["status"].isin(STATUS_ATIVO)].copy()
-    nomes_prod = ativas[["id_produto", "produto_nome"]].drop_duplicates("id_produto")
+    ativas = vendas[vendas["status"].isin(STATUS_ATIVO)]
+    nomes_prod = ativas.groupby("id_produto")["produto_nome"].first().to_dict()
 
-    pedidos = ativas.groupby("id_pedido")["id_produto"].apply(set)
-    multi = pedidos[pedidos.apply(len) >= 2]
-
-    receita_por_pedido = ativas.groupby("id_pedido")["valor_total"].first().to_dict()
+    # Receita da dupla = soma do subtotal (valor do item) dos DOIS produtos
+    # no pedido — não o valor_total do pedido, que crédita N-1 vezes o mesmo
+    # valor por par. Itera por pedido via itertools (evita o custo de
+    # pandas.groupby sobre ~96 mil grupos).
+    dados = sorted(zip(ativas["id_pedido"], ativas["id_produto"], ativas["subtotal"]))
     pares: dict[tuple[int, int], list] = {}
-
-    for id_ped, produtos in multi.items():
-        itens = sorted(produtos)
-        for i in range(len(itens)):
-            for j in range(i + 1, len(itens)):
-                chave = (itens[i], itens[j])
-                if chave not in pares:
-                    pares[chave] = [0, 0.0]
-                pares[chave][0] += 1
-                pares[chave][1] += receita_por_pedido.get(id_ped, 0.0)
+    for _, grupo in itertools.groupby(dados, key=lambda t: t[0]):
+        rec: dict[int, float] = {}
+        itens: list[int] = []
+        for _, produto, subtotal in grupo:
+            if produto not in rec:
+                rec[produto] = 0.0
+                itens.append(produto)
+            rec[produto] += subtotal
+        if len(itens) < 2:
+            continue
+        for i in range(len(itens) - 1):
+            a = itens[i]
+            for b in itens[i + 1 :]:
+                chave = (a, b)
+                par = pares.get(chave)
+                if par is None:
+                    par = [0, 0.0]
+                    pares[chave] = par
+                par[0] += 1
+                par[1] += rec[a] + rec[b]
 
     linhas = [
         {
-            "produto_a": nomes_prod.set_index("id_produto").at[a, "produto_nome"],
-            "produto_b": nomes_prod.set_index("id_produto").at[b, "produto_nome"],
+            "produto_a": nomes_prod[a],
+            "produto_b": nomes_prod[b],
             "co_ocorrencias": cnt,
             "receita_conjunta": round(rec, 2),
         }
@@ -534,9 +563,16 @@ def saude_estoque(estoque: pd.DataFrame, vendas: pd.DataFrame) -> pd.DataFrame:
         DataFrame com um registro por produto e seu status de cobertura.
     """
     ativas = vendas[vendas["status"].isin(STATUS_ATIVO)].copy()
-    n_dias = max((ativas["data_pedido"].max() - ativas["data_pedido"].min()).days, 1)
+    # Giro medido nos últimos 90 dias (demanda recente) — não no histórico
+    # inteiro, que esconderia rupturas/cobertura do estoque atual.
+    data_ref = ativas["data_pedido"].max()
+    recentes = ativas[ativas["data_pedido"] >= data_ref - pd.Timedelta(days=90)]
+    janela_recente_dias = (
+        recentes["data_pedido"].max() - recentes["data_pedido"].min()
+    ).days
+    n_dias = max(janela_recente_dias, 1)
 
-    giro = ativas.groupby("id_produto", as_index=False).agg(
+    giro = recentes.groupby("id_produto", as_index=False).agg(
         quantidade_vendida=("quantidade", "sum")
     )
     resumo_estoque = estoque.groupby("id_produto", as_index=False).agg(
@@ -554,7 +590,7 @@ def saude_estoque(estoque: pd.DataFrame, vendas: pd.DataFrame) -> pd.DataFrame:
     mediana = final["cobertura_dias"].median(skipna=True)
     final["alerta"] = np.select(
         [
-            final["giro_diario"] >= final["estoque_total"],
+            final["cobertura_dias"] <= 30,
             final["cobertura_dias"] > mediana * 3,
         ],
         ["RISCO DE RUPTURA", "EXCESSO DE CAPITAL"],

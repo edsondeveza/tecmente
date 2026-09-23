@@ -210,8 +210,18 @@ SELECT c.id_cliente,
     c.nome,
     c.sobrenome,
     c.tipo,
-    c.email,
-    c.cpf_cnpj AS cpf_cnpj_normalizado,
+    CASE
+        WHEN c.email REGEXP
+            '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+        THEN CONCAT(
+            LEFT(SUBSTRING_INDEX(c.email, '@', 1), 1),
+            REPEAT('*', CHAR_LENGTH(SUBSTRING_INDEX(c.email, '@', 1)) - 1),
+            '@',
+            SUBSTRING_INDEX(c.email, '@', -1)
+        )
+        ELSE '***'
+    END AS email,
+    REGEXP_REPLACE(c.cpf_cnpj, '[^0-9]', '') AS cpf_cnpj_normalizado,
     c.telefone,
     c.data_nascimento,
     c.data_cadastro,
@@ -223,6 +233,24 @@ SELECT c.id_cliente,
             '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN 0
         ELSE 1
     END AS email_valido,
+    CASE
+        WHEN c.email REGEXP
+            '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+        THEN CONCAT(
+            LEFT(SUBSTRING_INDEX(c.email, '@', 1), 1),
+            REPEAT('*', CHAR_LENGTH(SUBSTRING_INDEX(c.email, '@', 1)) - 1),
+            '@',
+            SUBSTRING_INDEX(c.email, '@', -1)
+        )
+        ELSE '***'
+    END AS email_mascarado,
+    CASE
+        WHEN c.cpf_cnpj IS NULL OR c.cpf_cnpj = '' THEN ''
+        ELSE CONCAT(
+            REPEAT('*', GREATEST(CHAR_LENGTH(REGEXP_REPLACE(c.cpf_cnpj, '[^0-9]', '')) - 2, 0)),
+            RIGHT(REGEXP_REPLACE(c.cpf_cnpj, '[^0-9]', ''), 2)
+        )
+    END AS cpf_cnpj_mascarado,
     CASE
         WHEN c.data_nascimento IS NULL THEN NULL
         ELSE TIMESTAMPDIFF(YEAR, c.data_nascimento, CURDATE())
@@ -271,7 +299,15 @@ SELECT pe.id_pedido,
     YEAR(pe.data_pedido) AS ano,
     MONTH(pe.data_pedido) AS mes,
     QUARTER(pe.data_pedido) AS trimestre,
-    MOD(DAYOFWEEK(pe.data_pedido) + 5, 7) AS dia_semana
+    CASE DAYOFWEEK(pe.data_pedido)
+        WHEN 1 THEN 'Domingo'
+        WHEN 2 THEN 'Segunda'
+        WHEN 3 THEN 'Terça'
+        WHEN 4 THEN 'Quarta'
+        WHEN 5 THEN 'Quinta'
+        WHEN 6 THEN 'Sexta'
+        ELSE 'Sábado'
+    END AS dia_semana
 FROM pedido pe
     INNER JOIN cliente cl ON pe.id_cliente = cl.id_cliente
     INNER JOIN loja l ON pe.id_loja = l.id_loja

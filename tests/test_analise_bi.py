@@ -152,6 +152,63 @@ class TestRfmRotulado:
         _, resumo = rfm_rotulado(_vendas_fake(), _clientes_fake())
         assert resumo["pct_clientes"].sum() == pytest.approx(100.0, abs=0.15)
 
+    def test_campeoes_alcancavel_apos_inverter_recencia(self) -> None:
+        """Regressão: rfm_total deve somar o r_score JÁ invertido para que
+        um cliente excelente (frequência alta, recência baixa, alto valor)
+        atinja o rótulo Campeões (rfm_total 15)."""
+        rng = pd.date_range("2016-09-25", "2026-09-22", freq="40D")
+        linhas: list[dict] = []
+        n_pedido = 0
+        # Campeão (cliente 40): 60 pedidos recentes e de alto valor.
+        for k in range(60):
+            n_pedido += 1
+            linhas.append(
+                {
+                    "id_pedido": n_pedido,
+                    "id_cliente": 40,
+                    "id_produto": 1,
+                    "quantidade": 5,
+                    "preco_venda": 20.0,
+                    "subtotal": 100.0,
+                    "valor_total": 97.0,
+                    "status": "Concluído",
+                    "canal": "Site",
+                    "data_pedido": "2026-09-10",
+                }
+            )
+        # Demais clientes com frequência/valor/recência variados.
+        for cli in range(1, 40):
+            freq = (cli * 3) % 18 + 1
+            for k in range(freq):
+                n_pedido += 1
+                linhas.append(
+                    {
+                        "id_pedido": n_pedido,
+                        "id_cliente": cli,
+                        "id_produto": 1,
+                        "quantidade": 1,
+                        "preco_venda": 10.0,
+                        "subtotal": 10.0,
+                        "valor_total": 9.7,
+                        "status": "Concluído",
+                        "canal": "Site",
+                        "data_pedido": rng[cli % len(rng)],
+                    }
+                )
+        vendas = pd.DataFrame(linhas)
+        vendas["data_pedido"] = pd.to_datetime(vendas["data_pedido"])
+        clientes = pd.DataFrame(
+            {
+                "id_cliente": list(range(1, 41)),
+                "tipo": ["PF"] * 40,
+                "estado": ["SP"] * 40,
+            }
+        )
+        rfm, _ = rfm_rotulado(vendas, clientes)
+        campeao = rfm[rfm["id_cliente"] == 40].iloc[0]
+        assert campeao["rfm_total"] == 15
+        assert campeao["rotulo"] == "Campeões"
+
 
 # =============================================================================
 # ABC / XYZ

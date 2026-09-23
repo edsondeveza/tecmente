@@ -133,7 +133,7 @@ pipeline.py --prever --bi
 | `fornecedor`   | 40 distribuidoras reais do setor de TI   |
 | `loja`         | 6 lojas da rede (físicas e online)       |
 | `departamento` | Departamentos da empresa                 |
-| `produto`      | 153 produtos com descrição por template  |
+| `produto`      | 154 produtos com descrição por template  |
 | `estoque`      | Quantidade por produto por loja          |
 | `funcionario`  | 80 funcionários distribuídos nas lojas   |
 | `cliente`      | 10.000 clientes PF e PJ (15% PJ)         |
@@ -407,7 +407,7 @@ Módulo de análises avançadas de BI (papel: Analista de BI Sênior) que lê os
 
 Um relatório consolidado (`relatorio_analises.txt`) resume os principais achados. A análise respeita o valor real do pedido mesmo quando o CSV repete `valor_total` por item — via agregação no nível de pedido antes das somas.
 
-**Status v1.0:** 8 análises implementadas e testadas (11 testes unitários). ✅
+**Status v1.0:** 7 análises implementadas e testadas (11 testes unitários). ✅
 
 ### `pipeline.py`
 

@@ -47,12 +47,8 @@ import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from visualizador import (
-    CAMINHO_BASE,
-    CAMINHO_GRAFICOS,
-    PALETA,
-    resolver_caminho_dados,
-)
+from tecmente.dados import CAMINHO_BASE, resolver_caminho_dados
+from visualizador import CAMINHO_GRAFICOS, PALETA
 
 logging.basicConfig(
     level=logging.INFO,
