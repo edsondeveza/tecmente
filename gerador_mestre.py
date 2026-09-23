@@ -5,7 +5,8 @@ gerador_mestre.py —  Gerador Mestre
 Gerador de dados sintéticos para o banco de dados da TecMente.
 
 Popula todas as tabelas do schema ``tecmente`` com dados realistas,
-simulando a operação de um e-commerce de informática ao longo de 2 anos.
+simulando a operação de um e-commerce de informática ao longo de um
+histórico configurável (ver ANOS_HISTORICO).
 **Não depende de nenhum arquivo externo** — produtos, categorias e
 descrições são gerados internamente a partir de templates por categoria.
 
@@ -36,7 +37,7 @@ from __future__ import annotations
 import logging
 import random
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import mysql.connector
 from faker import Faker
@@ -129,7 +130,9 @@ fake = Faker("pt_BR")
 NUM_CLIENTES: int = 10000  # 10.000clientes
 NUM_PEDIDOS: int = 100000  # 100.000 pedidos
 PROPORCAO_PJ: float = 0.15  # 15% dos clientes são Pessoa Jurídica
-DATA_INICIO = datetime.now() - timedelta(days=3650)  # 10 anos de histórico
+ANOS_HISTORICO: int = 10  # janela de pedidos: ajuste aqui (ex.: 2, 5, 10)
+DIAS_HISTORICO: int = 365 * ANOS_HISTORICO
+DATA_INICIO = datetime.now() - timedelta(days=DIAS_HISTORICO)
 # Multiplicadores de volume de vendas por mês.
 # Valores > 1.0 representam alta temporada; < 1.0, baixa temporada.
 # Referência: Black Friday (nov=1.80), volta às aulas (jan=1.30), Natal (dez=1.50).
@@ -165,7 +168,8 @@ RUIDO_DESCONTINUADO = 0.06  # ~6% produtos inativos (ativo=0)
 RUIDO_CLIENTE_DUP = 0.02  # ~2% clientes com CPF/e-mail duplicados (dedup)
 RUIDO_ESPACO = 0.02  # ~2% nomes/sobrenomes/cidades com espaços irregulares
 RUIDO_OBS = 0.05  # ~5% pedidos com observação de texto livre
-RUIDO_PEDIDO_ANTES_CADASTRO = 0.02  # ~2% pedidos anteriores ao cadastro do cliente
+# ~2% pedidos anteriores ao cadastro do cliente
+RUIDO_PEDIDO_ANTES_CADASTRO = 0.02
 
 
 # Catálogo de produtos embutido: (SKU, nome, preço_venda, categoria_hierarquica)
@@ -404,7 +408,7 @@ PRODUTOS_BASE: list[tuple[str, str, float, str]] = [
         "Hardware > Memória RAM",
     ),
     (
-        "51006",
+        "51036",
         "Memória SO-DIMM DDR4 8GB Kingston 3200MHz KVR32S22S6/8",
         259.99,
         "Hardware > Memória RAM",
@@ -1365,21 +1369,6 @@ def _razao_social() -> str:
 # =============================================================================
 
 TEMPLATES: dict[str, dict] = {
-    "Hardware > Placas de Video": {
-        "interface": ["PCIe 4.0 x16", "PCIe 3.0 x16", "PCIe 4.0 x8"],
-        "memoria": ["GDDR6", "GDDR6X", "GDDR5", "GDDR5X"],
-        "saida": [
-            "HDMI 2.1, 3x DisplayPort",
-            "HDMI 2.1, 2x DisplayPort",
-            "2x HDMI, DisplayPort",
-        ],
-        "uso": [
-            "games e criacao de conteudo",
-            "workstations e games",
-            "renderizacao e IA",
-        ],
-        "template": "{nome}. Interface {interface}, memoria {memoria}. Saidas: {saida}. Ideal para {uso}.",
-    },
     "Hardware > Placas de Vídeo": {
         "interface": ["PCIe 4.0 x16", "PCIe 3.0 x16", "PCIe 4.0 x8"],
         "memoria": ["GDDR6", "GDDR6X", "GDDR5", "GDDR5X"],
@@ -2141,12 +2130,17 @@ def popular_produtos(
 
     log.info("%d produtos carregados do catálogo interno.", len(produtos_db))
 
+    produtos_db = [
+        (*p, (1 if random.random() >= RUIDO_DESCONTINUADO else 0)) for p in produtos_db
+    ]
+
     # Inserção em lotes de 500
     for i in range(0, len(produtos_db), 500):
         cur.executemany(
             "INSERT IGNORE INTO produto "
-            "(sku, nome, descricao, preco_custo, preco_venda, id_categoria, id_fornecedor) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "(sku, nome, descricao, preco_custo, preco_venda, id_categoria, "
+            "id_fornecedor, ativo) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             produtos_db[i : i + 500],
         )
 
@@ -2242,10 +2236,9 @@ def popular_funcionarios(cur, loja_ids: list[int]) -> dict[int, list[int]]:
             data_admissao = fake.date_between(start_date="-6y")
             # Nascimento: funcionário tinha entre 18 e 45 anos na admissão,
             # garantindo faixa etária atual realista (hoje entre ~18 e ~51 anos).
+            # Subtração em dias (não .replace()) evita 29/fev inexistente.
             idade_na_admissao = random.randint(18, 45)
-            data_nascimento = data_admissao.replace(
-                year=data_admissao.year - idade_na_admissao
-            )
+            data_nascimento = data_admissao - timedelta(days=365 * idade_na_admissao)
             funcs.append(
                 (
                     fake.first_name(),
@@ -2277,7 +2270,7 @@ def popular_funcionarios(cur, loja_ids: list[int]) -> dict[int, list[int]]:
     return vend
 
 
-def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
+def popular_clientes(cur) -> tuple[list[int], list[int], dict[int, date]]:
     """Gera clientes PF e PJ com dados sintéticos e ruído realista.
 
     Aplica as seguintes regras de ruído para simular qualidade de dados real:
@@ -2294,7 +2287,8 @@ def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
 
     Returns:
         Tupla ``(pf_ids, pj_ids, recentes)`` com os IDs dos clientes gerados
-        por tipo e o conjunto de clientes recentes (pool de anomalia temporal).
+        por tipo e, para os clientes recentes (pool de anomalia temporal),
+        o mapeamento ``id_cliente → data_cadastro``.
         Usados na segmentação e no ruído de datas dos pedidos.
     """
     clientes = []
@@ -2321,7 +2315,9 @@ def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
         if random.random() < 0.03:
             cadastro = fake.date_between(start_date="-90d", end_date="today")
         else:
-            cadastro = DATA_INICIO - timedelta(days=random.randint(0, 300))
+            cadastro = DATA_INICIO - timedelta(
+                days=random.randint(0, DIAS_HISTORICO // 10)
+            )
 
         nasc = (
             None
@@ -2373,8 +2369,9 @@ def popular_clientes(cur) -> tuple[list[int], list[int], set[int]]:
     pj_ids = [r[0] for r in todas if r[1] == "PJ"]
     # Pool de anomalia temporal: clientes registrados nos últimos 90 dias.
     # Recebem pedidos anteriores ao cadastro via RUIDO_PEDIDO_ANTES_CADASTRO.
+    # Guarda também a data de cadastro para datar o pedido pouco antes do registro.
     recente_limiar = (datetime.now() - timedelta(days=90)).date()
-    recentes = {r[0] for r in todas if r[2] >= recente_limiar}
+    recentes = {r[0]: r[2] for r in todas if r[2] >= recente_limiar}
 
     return pf_ids, pj_ids, recentes
 
@@ -2386,7 +2383,7 @@ def popular_pedidos(
     vend_por_loja: dict[int, list[int]],
     pf_ids: list[int],
     pj_ids: list[int],
-    recentes: set[int],
+    recentes: dict[int, date],
 ) -> None:
     """Gera pedidos e itens simulando comportamento realista de compra.
 
@@ -2411,7 +2408,8 @@ def popular_pedidos(
         vend_por_loja: Dicionário ``{id_loja: [id_funcionario, ...]}``.
         pf_ids:        IDs de clientes Pessoa Física.
         pj_ids:        IDs de clientes Pessoa Jurídica.
-        recentes:      IDs de clientes recentes (pool de anomalia temporal).
+        recentes:      Clientes recentes (mapeamento id → data de cadastro),
+                       usados apenas na anomalia temporal.
     """
     cur.execute("SELECT id_loja, tipo FROM loja")
     lojas = cur.fetchall()
@@ -2451,8 +2449,10 @@ def popular_pedidos(
     while gerados < NUM_PEDIDOS:
         # Anomalia temporal controlada: ~2% dos pedidos vão para clientes
         # registrados recentemente, fazendo o pedido preceder o cadastro.
+        eh_anomalia = False
         if random.random() < RUIDO_PEDIDO_ANTES_CADASTRO and recentes:
             id_cli = random.choice(list(recentes))
+            eh_anomalia = True
         else:
             # Seleciona cliente com base no perfil comportamental
             r = random.random()
@@ -2468,8 +2468,18 @@ def popular_pedidos(
         pj = id_cli in pj_ids
 
         # Aplica sazonalidade por amostragem por rejeição (mensal × dia da semana)
-        dias = random.randint(0, 729)
-        data = DATA_INICIO + timedelta(days=dias)
+        if eh_anomalia:
+            # Pedido poucos dias antes do cadastro do cliente (anomalia sutil).
+            cadastro_cli = recentes.get(id_cli)
+            if cadastro_cli is None:
+                continue
+            data = datetime.combine(
+                cadastro_cli - timedelta(days=random.randint(1, 60)),
+                datetime.min.time(),
+            )
+        else:
+            dias = random.randint(0, DIAS_HISTORICO - 1)
+            data = DATA_INICIO + timedelta(days=dias)
         boost = SAZONALIDADE.get(data.month, 1.0)
         boost *= SAZONALIDADE_SEMANA.get(data.weekday(), 1.0)
         if random.random() > boost / 1.80:

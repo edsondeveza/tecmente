@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -757,7 +758,7 @@ def main() -> None:
 
     if not selecionadas:
         log.error("Nenhuma análise selecionada. Use: --apenas rfm")
-        return
+        sys.exit(1)
 
     log.info("=" * 55)
     log.info("TecMente — Análises de BI  (Analista de BI)")
@@ -801,4 +802,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        log.exception("Análises de BI falharam.")
+        sys.exit(1)

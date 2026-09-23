@@ -33,6 +33,7 @@ Versão: 1.2.0 — caminho de dados relativo ao script (2026-03-20)
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -568,11 +569,14 @@ def dashboard_03_top_vendedores() -> None:
 
     lojas: list[str] = sorted(resumo["loja_nome"].unique())
     n_lojas: int = len(lojas)
+    if n_lojas == 0:
+        log.warning("[D03] Nenhuma loja com vendedores encontrada. Pulando.")
+        return
     top_n: int = 5
-    # --- Figura: grade 2 × 3 ----------------------------------------------
+    # --- Figura: grade dinâmica (3 colunas; linhas conforme nº de lojas) -----
     n_cols: int = 3
-    n_rows: int = 2
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 12))
+    n_rows: int = (n_lojas + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 6 * n_rows), squeeze=False)
     fig.patch.set_facecolor(PALETA["fundo"])
     fig.suptitle(
         f"Top {top_n} Vendedores por Loja — TecMente",
@@ -582,7 +586,7 @@ def dashboard_03_top_vendedores() -> None:
         y=1.02,
     )
 
-    # Achata a grade 2×3 em lista para iterar com índice
+    # Achata a grade em lista para iterar com índice
     axes_flat = axes.flatten()
 
     for idx, loja in enumerate(lojas):
@@ -629,7 +633,7 @@ def dashboard_03_top_vendedores() -> None:
         sns.despine(ax=ax, left=True, top=True, right=True)
 
     # Oculta subplots vazios se n_lojas < n_rows * n_cols
-    for idx in range(n_lojas, n_rows * n_cols):
+    for idx in range(n_lojas, len(axes_flat)):
         axes_flat[idx].set_visible(False)
 
     plt.tight_layout()
@@ -1306,11 +1310,12 @@ def dashboard_07_rfm() -> None:
     salvar_figura(fig_heatmap, "d07_rfm_heatmap")
 
     # --- Log --------------------------------------------------------------
+    r4f4 = heatmap_data.loc[4, 4] if (4, 4) in heatmap_data.index else 0.0
     log.info(
         "[D07] Clientes: %d | Valor total: R$ %s | R4F4: R$ %s",
         len(rfm),
         f"{rfm['valor'].sum():_.0f}".replace("_", "."),
-        f"{heatmap_data.loc[4, 4]:_.0f}".replace("_", "."),
+        f"{r4f4:_.0f}".replace("_", "."),
     )
 
 
@@ -1354,6 +1359,7 @@ def main() -> None:
     log.info("-" * 60)
     if erros:
         log.warning("Concluído com erros em: %s", ",".join(erros))
+        sys.exit(1)
     else:
         log.info("Todos os dashboards concluídos com sucesso.")
     log.info("Gráficos em: %s", CAMINHO_GRAFICOS.resolve())

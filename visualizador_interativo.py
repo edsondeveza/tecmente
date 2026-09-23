@@ -6,7 +6,8 @@ Responsabilidade: geração de dashboards interativos (HTML + Plotly)
 a partir dos mesmos dados usados pelo visualizador.py (matplotlib).
 
 Reutiliza a lógica de carregamento de dados do visualizador.py:
-    carregar_dados, resolver_caminho_dados, PALETA, FONTE, CAMINHO_BASE
+    carregar_dados, resolver_caminho_dados, PALETA, CAMINHO_BASE
+    (a constante FONTE é definida apenas em visualizador.py — fonte única).
 
 Papel no pipeline:
     DBA      → extrator.py     (extração de dados brutos)
@@ -27,15 +28,16 @@ Versão: 1.0 (Fase 2 — Plotly)
 from __future__ import annotations
 
 import logging
+import sys
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+import visualizador  # fonte única de FONTE (definida em visualizador.py)
 from visualizador import (
     CAMINHO_BASE,
     CAMINHO_RELATORIOS,
-    FONTE,
     PALETA,
     SEQUENCIA_CORES,
     carregar_dados,
@@ -277,7 +279,7 @@ def dashboard_02_interativo() -> None:
 
 
 def dashboard_03_interativo() -> None:
-    """Grade 2×3 com o top 5 vendedores por loja em faturamento."""
+    """Grade dinâmica com o top 5 vendedores por loja em faturamento."""
     df_vendas = carregar_dados(
         nome_csv="vendas_tratado.csv",
         query_sql=(
@@ -303,11 +305,14 @@ def dashboard_03_interativo() -> None:
     )
 
     lojas: list[str] = sorted(str(x) for x in resumo["loja_nome"].unique())
+    n_lojas: int = len(lojas)
     top_n = 5
+    n_cols: int = 3
+    n_rows: int = (n_lojas + n_cols - 1) // n_cols
 
     fig = make_subplots(
-        rows=2,
-        cols=3,
+        rows=n_rows,
+        cols=n_cols,
         subplot_titles=lojas,
         shared_yaxes=False,
     )
@@ -333,24 +338,24 @@ def dashboard_03_interativo() -> None:
                 textfont=dict(size=9),
                 hovertemplate="%{y}<br>R$ %{x:,.2f}<extra></extra>",
             ),
-            row=((idx - 1) // 3) + 1,
-            col=((idx - 1) % 3) + 1,
+            row=((idx - 1) // n_cols) + 1,
+            col=((idx - 1) % n_cols) + 1,
         )
 
     fig.update_layout(
         title=f"Top {top_n} Vendedores por Loja — TecMente",
-        height=820,
+        height=300 * n_rows + 220,
         showlegend=False,
     )
     fig.update_xaxes(**_moeda(milhar=False), tickfont=dict(size=9))
     _aplicar_estilo(fig)
 
     # Oculta subplots vazios quando houver menos lojas que células
-    for idx in range(len(lojas) + 1, 7):
+    for idx in range(n_lojas + 1, n_rows * n_cols + 1):
         fig.add_annotation(
             text="",
-            row=((idx - 1) // 3) + 1,
-            col=((idx - 1) % 3) + 1,
+            row=((idx - 1) // n_cols) + 1,
+            col=((idx - 1) % n_cols) + 1,
         )
 
     salvar_html(fig, "d03_top_vendedores")
@@ -790,7 +795,9 @@ def dashboard_07_interativo() -> None:
 def main() -> None:
     """Gera todos os dashboards interativos (Plotly) em HTML."""
     log.info("=" * 60)
-    log.info("TecMente — Visualizador Interativo  |  Fonte: %s", FONTE.upper())
+    log.info(
+        "TecMente — Visualizador Interativo  |  Fonte: %s", visualizador.FONTE.upper()
+    )
     log.info("=" * 60)
 
     garantir_diretorios()
@@ -823,6 +830,7 @@ def main() -> None:
     log.info("-" * 60)
     if erros:
         log.warning("Concluído com erros em: %s", ",".join(erros))
+        sys.exit(1)
     else:
         log.info("Todos os dashboards interativos concluídos com sucesso.")
     log.info("Dashboards em: %s", CAMINHO_RELATORIOS.resolve())

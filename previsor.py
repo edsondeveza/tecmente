@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -410,4 +411,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        log.exception("Previsão falhou.")
+        sys.exit(1)

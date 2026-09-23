@@ -757,6 +757,7 @@ def main() -> None:
         log.warning("Concluído com %d aviso(s)/erro(s):", len(erros))
         for e in erros:
             log.warning("  %s", e)
+        sys.exit(1)
     else:
         log.info("Tratamento concluído com sucesso.")
         log.info("Próximo passo: entregar pasta _tratado ao time de BI.")

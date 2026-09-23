@@ -150,8 +150,8 @@ def main() -> None:
         "--dias",
         type=int,
         default=3650,
-        help="Dias de histórico para extração (padrão: 3650 ≈ 10 anos, "
-        "ou seja, tudo disponível).",
+        help="Dias de histórico para extração (padrão: 3650 ≈ todo o histórico "
+        "disponível; a janela do gerador é configurável em ANOS_HISTORICO).",
     )
     parser.add_argument(
         "--prever",
