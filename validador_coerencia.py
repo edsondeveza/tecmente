@@ -2,8 +2,9 @@
 """
 validador_coerencia.py — Validações de consistência dos dados gerados
 
-Executa as 18 verificações pedidas no prompt.md para garantir que os dados
-estão coerentes após as alterações no gerador.
+Executa as 18 verificacoes de coerencia (17 automáticas no MySQL + a checagem
+de artefatos do pipeline) para garantir que os dados continuam coerentes apos
+as alteracoes no gerador.
 
 Uso
 ---
@@ -16,10 +17,12 @@ Versão: 1.0
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import mysql.connector
 
 from config import DB_CONFIG
+from tecmente.dados import resolver_caminho_dados
 
 logging.basicConfig(
     level=logging.INFO,
@@ -338,13 +341,78 @@ class ValidadorCoerencia:
         return self.executar_query("17. Foreign keys integrass", query, 0)
 
     def validar_18_pipeline_executa(self):
-        """18. O pipeline completo continua executando?"""
-        # Esta validacao eh manual - apenas um placeholder
-        log.info("18. Pipeline executa: Manual - Necessario testar")
-        return None
+        """18. O pipeline produziu artefatos integros?
+
+        Verifica que a pasta ``data/*_tratado/`` mais recente contém os cinco
+        artefatos que o tratador.py promete produzir, e que nenhum está vazio.
+        É determinístico (não depende de mtime nem de relógio) e não usa MySQL.
+        """
+        try:
+            pasta = resolver_caminho_dados(Path(__file__).parent / "data")
+        except FileNotFoundError:
+            log.error("18. Pipeline: nenhuma pasta data/*_tratado encontrada")
+            return False
+
+        artefatos = (
+            "clientes_tratado.csv",
+            "vendas_tratado.csv",
+            "produtos_estoque_tratado.csv",
+            "equipe_lojas_tratado.csv",
+            "relatorio_qualidade.txt",
+        )
+        faltando = [a for a in artefatos if not (pasta / a).exists()]
+        if faltando:
+            log.error("18. Pipeline: artefatos ausentes: %s", ", ".join(faltando))
+            return False
+
+        vazios = [a for a in artefatos if (pasta / a).stat().st_size == 0]
+        if vazios:
+            log.error("18. Pipeline: artefatos vazios: %s", ", ".join(vazios))
+            return False
+
+        log.info(
+            "18. Pipeline: %d artefatos integros em %s", len(artefatos), pasta.name
+        )
+        return True
+
+    def validar_19_estoque_temporal_coerente(self):
+        """19. O estoque e temporal e coerente com a demanda?
+
+        Checks do saldo:
+        - nenhum saldo negativo (estoque nao "desconta" abaixo de zero);
+        - o snapshot mais recente e do mesmo dia ou posterior ao ultimo pedido,
+          ou seja, o saldo corrente nao e anterior a ultima venda;
+        - todo par produto x loja tem exatamente um snapshot na data corrente
+          (sem par faltando nem duplicado na chave unica);
+        - a tabela e historica, nao um snapshot unico: existe mais de uma data.
+        """
+        query = """
+            SELECT (
+                (SELECT COUNT(*) FROM estoque WHERE quantidade < 0) +
+                (SELECT COUNT(*) FROM estoque
+                 WHERE data = (SELECT MAX(data) FROM estoque)
+                   AND data < (SELECT MAX(data_pedido) FROM pedido)) +
+                (SELECT COUNT(*) FROM estoque
+                 WHERE data = (SELECT MAX(data) FROM estoque)
+                   AND id_produto NOT IN (
+                       SELECT e2.id_produto FROM estoque e2
+                       WHERE e2.data = (SELECT MAX(data) FROM estoque)
+                   )) +
+                (SELECT COUNT(*) FROM (
+                    SELECT id_produto, id_loja
+                    FROM estoque
+                    WHERE data = (SELECT MAX(data) FROM estoque)
+                    GROUP BY id_produto, id_loja
+                    HAVING COUNT(*) > 1
+                 ) AS dup) +
+                (SELECT CASE WHEN COUNT(DISTINCT data) <= 1 THEN 1 ELSE 0 END
+                 FROM estoque)
+            ) as contagem
+        """
+        return self.executar_query("19. Estoque temporal coerente", query, 0)
 
     def executar_todas_validacoes(self):
-        """Executa todas as 18 validacoes."""
+        """Executa todas as 19 validacoes."""
         log.info("=" * 60)
         log.info("INICIANDO VALIDACOES DE COERENCIA")
         log.info("=" * 60)
@@ -368,23 +436,34 @@ class ValidadorCoerencia:
             self.validar_16_duplicidades_inesperadas,
             self.validar_17_foreign_keys_integridade,
             self.validar_18_pipeline_executa,
+            self.validar_19_estoque_temporal_coerente,
         ]
 
         sucessos = 0
         total_validaveis = 0
+        erros = 0
 
         for validacao in validacoes:
             resultado = validacao()
+            if resultado is None:
+                # A query estourou exceção. Isso é FALHA, não "não avaliável":
+                # antes o None sumia do denominador e o resumo podia dizer
+                # "17/17" mesmo com várias validações quebradas.
+                erros += 1
+                total_validaveis += 1
+                continue
+            total_validaveis += 1
+            # `is True` sozinho rejeitaria um 0 inteiro devolvido por
+            # executar_query quando não há check_valor_esperado.
             if resultado is True or resultado == 0:
                 sucessos += 1
-            if resultado is not None:
-                total_validaveis += 1
 
         log.info("=" * 60)
         log.info("RESUMO DAS VALIDACOES")
         log.info("=" * 60)
         log.info(f"Validacoes bem-sucedidas: {sucessos}/{total_validaveis}")
-        log.info("Validacoes manuais: 1")
+        if erros:
+            log.error(f"Validacoes com erro de execucao: {erros}")
         log.info("=" * 60)
 
         if sucessos == total_validaveis:

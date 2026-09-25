@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-visualizador_interativo.py — Camada BI interativa da TecMente (Fase 2).
+visualizador_interativo.py — Camada BI interativa da TecMente (Plotly).
 
 Responsabilidade: geração de dashboards interativos (HTML + Plotly)
 a partir dos mesmos dados usados pelo visualizador.py (matplotlib).
@@ -22,7 +22,7 @@ Uso:
     python visualizador_interativo.py
 
 Autor: Edson Deveza
-Versão: 1.0 (Fase 2 — Plotly)
+Versão: 1.0 (Plotly)
 """
 
 import argparse

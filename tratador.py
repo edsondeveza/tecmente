@@ -464,7 +464,6 @@ def tratar_vendas(
     mask_cancelado = df["status"] == "Cancelado"
     df_cancelados = df[mask_cancelado].copy()
     df_ativos = df[~mask_cancelado].copy()
-    df_cancelados = df[mask_cancelado].copy()
     # id_funcionario é NULL nos canais online → float64 com NaN na extração.
     # Converte para nullable integer (Int64) para o CSV sair sem casa decimal.
     df_ativos["id_funcionario"] = df_ativos["id_funcionario"].astype("Int64")
@@ -509,7 +508,7 @@ def tratar_produtos_estoque(
     """Trata o arquivo de produtos e estoque.
 
     Operações realizadas:
-    - Converte ultima_atualizacao para datetime
+    - Converte estoque_data para datetime (data do snapshot)
     - Calcula margem bruta e percentual de margem
     - Classifica produtos por faixa de preço (ticket)
     - Calcula estoque total consolidado por produto
@@ -530,7 +529,8 @@ def tratar_produtos_estoque(
     relatorio.nulos(df, "produtos_estoque.csv (bruto)")
 
     # ── Conversão de data ──────────────────────────────────────────────────
-    df["ultima_atualizacao"] = pd.to_datetime(df["ultima_atualizacao"], errors="coerce")
+    # estoque_data é a data do snapshot de saldo que originou a linha.
+    df["estoque_data"] = pd.to_datetime(df["estoque_data"], errors="coerce")
 
     # ── Cálculos de margem ─────────────────────────────────────────────────
     df["margem_bruta"] = (df["preco_venda"] - df["preco_custo"]).round(2)

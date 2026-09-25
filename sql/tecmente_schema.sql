@@ -53,15 +53,20 @@ CREATE TABLE produto (
     INDEX idx_preco (preco_venda),
     INDEX idx_ativo (ativo)
 );
+-- Tabela temporal: um snapshot de saldo por produto × loja × data.
+-- A chave única inclui `data` (e não só produto/loja) porque o saldo muda ao
+-- longo do tempo — é isso que permite medir cobertura de estoque em qualquer
+-- período, e não só "hoje".
 CREATE TABLE estoque (
     id_estoque INT AUTO_INCREMENT PRIMARY KEY,
     id_produto INT NOT NULL,
     id_loja INT NOT NULL,
+    data DATE NOT NULL,
     quantidade INT NOT NULL DEFAULT 0,
-    ultima_atualizacao DATE,
     FOREIGN KEY (id_produto) REFERENCES produto(id_produto),
     FOREIGN KEY (id_loja) REFERENCES loja(id_loja),
-    UNIQUE KEY uq_prod_loja (id_produto, id_loja)
+    UNIQUE KEY uq_prod_loja_data (id_produto, id_loja, data),
+    INDEX idx_data (data)
 );
 -- ─────────────────────────────────────────────
 -- PESSOAS

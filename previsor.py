@@ -174,6 +174,96 @@ def treinar_modelo(
     return modelo
 
 
+def backtest(
+    df_diario: pd.DataFrame,
+    teste_dias: int = 30,
+    blocos: int = 6,
+) -> dict[str, object]:
+    """Avalia o modelo em vários blocos de ``teste_dias`` consecutivos.
+
+    Medir em uma única janela final é frágil: ela costuma cair numa faixa
+    sazonalmente atípica e um número só vira ruído. Vários blocos dão uma
+    leitura estável e revelam se o modelo consistentemente bate (ou perde
+    para) a sazonalidade pura.
+
+    Args:
+        df_diario: Série diária com ``data`` e ``receita``.
+        teste_dias: Tamanho de cada bloco de teste.
+        blocos: Quantos blocos usar, terminando no fim da série.
+
+    Returns:
+        Dict com as médias e desvios por métrica, do modelo e do baseline.
+    """
+    dados = construir_features(df_diario)
+    metricas_modelo: list[dict[str, float]] = []
+    metricas_base: list[dict[str, float]] = []
+
+    for k in range(blocos):
+        fim = len(dados) - teste_dias * k
+        corte = fim - teste_dias
+        if corte < 400:  # treino mínimo para as sazonalidades
+            break
+        X_treino, y_treino, X_teste, y_teste = dividir_treino_teste(
+            dados.iloc[:fim].copy(), teste_dias
+        )
+        if len(X_treino) == 0 or len(X_teste) == 0:
+            continue
+        modelo = treinar_modelo(X_treino, y_treino)
+        metricas_modelo.append(avaliar_modelo(y_teste, modelo.predict(X_teste)))
+
+        treino_bruto = df_diario.iloc[:fim]
+        teste_bruto = df_diario.iloc[corte:fim]
+        base = baseline_sazonal(treino_bruto, teste_bruto)
+        metricas_base.append(avaliar_modelo(teste_bruto["receita"], base))
+
+    def resumo(lista: list[dict[str, float]]) -> dict[str, float]:
+        if not lista:
+            return {}
+        df = pd.DataFrame(lista)
+        return {c: float(df[c].mean()) for c in df.columns}
+
+    saida: dict[str, object] = {
+        "blocos": len(metricas_modelo),
+        "teste_dias": teste_dias,
+        "modelo": resumo(metricas_modelo),
+        "baseline": resumo(metricas_base),
+    }
+    if metricas_modelo:
+        df = pd.DataFrame(metricas_modelo)
+        saida["desvio"] = {c: float(df[c].std()) for c in df.columns}
+    return saida
+
+
+def gerar_relatorio_backtest(resultado: dict[str, object]) -> list[str]:
+    """Monta as linhas do relatório de backtest multi-bloque."""
+    if not resultado.get("blocos"):
+        return ["(backtest ignorado: série curta demais)"]
+    modelo = resultado["modelo"]  # type: ignore[index]
+    base = resultado["baseline"]  # type: ignore[index]
+    linhas = [
+        f"   Backtest: {resultado['blocos']} blocos de {resultado['teste_dias']} dias",
+        "   " + "-" * 50,
+        "   Métrica          Modelo      Baseline sazonal",
+    ]
+    rotulos = {
+        "mae": "MAE (R$)",
+        "rmse": "RMSE (R$)",
+        "mape": "MAPE diário",
+        "wape": "WAPE diário",
+        "erro_horizonte": "Erro do horizonte",
+    }
+    for chave, rotulo in rotulos.items():
+        if chave not in modelo:
+            continue
+        valor_base = base.get(chave, float("nan"))
+        linhas.append(f"   {rotulo:<15} {modelo[chave]:>9.1f}  {valor_base:>17.1f}")
+    linhas.append("   " + "-" * 50)
+    linhas.append("   Nota: o MAPE diário é a média dos erros individuais e penaliza")
+    linhas.append("   dias de baixa receita. O erro do horizonte (soma do período) é")
+    linhas.append("   a leitura que corresponde à decisão de negócio.")
+    return linhas
+
+
 def prever_futuro(
     modelo: RandomForestRegressor,
     dados: pd.DataFrame,
@@ -187,7 +277,8 @@ def prever_futuro(
 
     Args:
         modelo: Modelo treinado.
-        dados: DataFrame com features (inclui a última observação real).
+        dados: DataFrame com as colunas ``data`` e ``receita``, terminando na
+            última observação real (não precisa estar no formato de features).
         dias_prever: Quantos dias para frente prever.
 
     Returns:
@@ -200,12 +291,14 @@ def prever_futuro(
     previsoes: list[float] = []
     for i in range(dias_prever):
         data_fut = ultima_data + timedelta(days=i + 1)
-        # Features de calendário do dia a prever
+        # int() no week: o treino grava como int64 (astype(int) em
+        # construir_features) e isocalendar() devolve uint32 — sem o cast o
+        # predict receberia tipos divergentes entre treino e previsão.
         vetor = [
             data_fut.dayofweek,
             data_fut.month,
             data_fut.day,
-            data_fut.isocalendar().week,
+            int(data_fut.isocalendar().week),
         ]
         # Lags: últimos valores conhecidos (previstos quando não há real)
         for lag in LAGS:
@@ -223,34 +316,112 @@ def prever_futuro(
 def avaliar_modelo(y_real: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
     """Calcula métricas de erro da previsão.
 
+    Inclui três leituras do mesmo erro, porque elas respondem perguntas
+    diferentes:
+
+    - ``mae``/``rmse``/``mape``: erro **por dia**. O MAPE é a média dos APEs
+      individuais, então dias de receita baixa pesam igual a dias de venda
+      grande e o número tende a parecer ruim.
+    - ``wape``: erro agregado ponderado pelo próprio volume
+      (soma dos absolutos / soma dos reais), menos sensível a esse viés.
+    - ``erro_horizonte``/``mape_horizonte``: erro na **soma do horizonte**, que
+      é a decisão que o relatório realmente comunica ("quanto vou faturar nos
+      próximos N dias"). Os erros diários se cancelam parcialmente aqui.
+
     Args:
         y_real: Valores observados.
         y_pred: Valores previstos.
 
     Returns:
-        Dict com ``mae``, ``rmse`` e ``mape``.
+        Dict com ``mae``, ``rmse``, ``mape``, ``wape``, ``erro_horizonte`` e
+        ``mape_horizonte``.
     """
-    mae = mean_absolute_error(y_real, y_pred)
+    y_real = np.asarray(y_real, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    mae = float(mean_absolute_error(y_real, y_pred))
     rmse = float(np.sqrt(mean_squared_error(y_real, y_pred)))
-    nao_zero = y_real[y_real != 0]
+    nao_zero = y_real != 0
     mape = (
-        float(np.mean(np.abs((nao_zero - y_pred[y_real != 0]) / nao_zero)) * 100)
-        if len(nao_zero)
+        float(
+            np.mean(np.abs((y_real[nao_zero] - y_pred[nao_zero]) / y_real[nao_zero]))
+            * 100
+        )
+        if nao_zero.any()
         else 0.0
     )
-    return {"mae": mae, "rmse": rmse, "mape": mape}
+    soma_real = float(y_real.sum())
+    wape = float(np.abs(y_real - y_pred).sum() / soma_real * 100) if soma_real else 0.0
+    soma_pred = float(y_pred.sum())
+    erro_horizonte = (
+        float(abs(soma_pred - soma_real) / soma_real * 100) if soma_real else 0.0
+    )
+    return {
+        "mae": mae,
+        "rmse": rmse,
+        "mape": mape,
+        "wape": wape,
+        "erro_horizonte": erro_horizonte,
+        "mape_horizonte": erro_horizonte,
+    }
+
+
+def baseline_sazonal(treino: pd.DataFrame, teste: pd.DataFrame) -> np.ndarray:
+    """Previsão ingênua por sazonalidade mensal x dia da semana.
+
+    Usa a mediana histórica de cada combinação (mês, dia da semana) — a mesma
+    estrutura de features que o modelo consome, porém sem nenhum ajuste. Serve
+    como piso de comparação: um modelo que não o supera não está agregando
+    nada sobre a sazonalidade pura.
+
+    Args:
+        treino: DataFrame com ``data`` e ``receita`` (colunas do histórico).
+        teste:  DataFrame com ``data`` e ``receita`` (janela a prever).
+
+    Returns:
+        Array com uma previsão por linha de ``teste``.
+    """
+    tabela = pd.DataFrame(
+        {
+            "receita": np.asarray(treino["receita"], dtype=float),
+            "mes": pd.to_datetime(treino["data"]).dt.month,
+            "dow": pd.to_datetime(treino["data"]).dt.dayofweek,
+        }
+    )
+    mediana = tabela.pivot_table(
+        index="mes", columns="dow", values="receita", aggfunc="median"
+    )
+    # Células nunca vistas (mês x dow sem histórico) caem na mediana global.
+    global_mediana = float(np.median(tabela["receita"]))
+    lookup = {
+        (mes, dow): float(mediana.loc[mes, dow])
+        for mes in mediana.index
+        for dow in mediana.columns
+        if pd.notna(mediana.loc[mes, dow])
+    }
+    datas = pd.to_datetime(teste["data"])
+    return np.array(
+        [
+            lookup.get((d.month, d.dayofweek), global_mediana)
+            for d in pd.to_datetime(datas)
+        ]
+    )
 
 
 def gerar_relatorio(
-    pasta_resumo: Path, metricas: dict[str, float], num_dias: int, receita: float
+    pasta_resumo: Path,
+    metricas: dict[str, float],
+    num_dias: int,
+    receita: float,
+    linhas_backtest: list[str] | None = None,
 ) -> None:
     """Grava o relatório de métricas da previsão.
 
     Args:
         pasta_resumo: Pasta onde o relatório será salvo.
-        metricas: Dict com mae/rmse/mape.
+        metricas: Dict com mae/rmse/mape/wape/erro_horizonte.
         num_dias: Número de dias previstos.
         receita: Soma da receita prevista.
+        linhas_backtest: Bloco opcional com a comparação multi-bloque.
     """
     linhas = [
         "=" * 55,
@@ -259,13 +430,27 @@ def gerar_relatorio(
         "=" * 55,
         f"  Dias previstos           : {num_dias}",
         f"  Receita prevista (soma)  : R$ {receita:,.2f}",
-        f"  MAE (erro médio absoluto): R$ {metricas['mae']:,.2f}",
-        f"  RMSE                     : R$ {metricas['rmse']:,.2f}",
-        f"  MAPE (%)                 : {metricas['mape']:.1f}%",
+        "-" * 55,
+        "  ERRO DIÁRIO (média por dia)",
+        f"    MAE (erro médio abs.)  : R$ {metricas['mae']:,.2f}",
+        f"    RMSE                   : R$ {metricas['rmse']:,.2f}",
+        f"    MAPE (%)               : {metricas['mape']:.1f}%",
+        f"    WAPE (%)               : {metricas.get('wape', 0.0):.1f}%",
+        "-" * 55,
+        "  ERRO NO HORIZONTE (soma do período)",
+        f"    Erro (%)               : {metricas.get('erro_horizonte', 0.0):.1f}%",
+        "=" * 55,
+        "  Como ler: o MAPE diário é a média dos erros individuais e pesa" " dias de",
+        "  baixa receita tanto quanto dias de venda grande. O erro do" " horizonte",
+        "  é a leitura da decisão real: quanto faturamento o período soma.",
         "=" * 55,
         "  Método: Random Forest com features de calendário e lag de 1/7/14 dias.",
         "  Previsão recursiva para os próximos dias.",
     ]
+    if linhas_backtest:
+        linhas.extend(
+            ["=" * 55, "  BACKTEST MULTI-BLOCO vs BASELINE SAZONAL", *linhas_backtest]
+        )
     caminho = pasta_resumo / "relatorio_previsao.txt"
     caminho.write_text("\n".join(linhas), encoding="utf-8")
     log.info("Relatório salvo: %s", caminho)
@@ -344,6 +529,14 @@ def main() -> None:
         default=30,
         help="Quantos dias finais usar como teste (padrão: 30).",
     )
+    parser.add_argument(
+        "--backtest",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Avalia o modelo em N blocos de --teste_dias e compara com o "
+        "baseline sazonal (padrão: 0, desativado).",
+    )
     args = parser.parse_args()
 
     CAMINHO_PREDICOES.mkdir(parents=True, exist_ok=True)
@@ -370,11 +563,18 @@ def main() -> None:
     y_pred_teste = modelo.predict(X_teste)
     metricas = avaliar_modelo(y_teste, np.array(y_pred_teste))
     log.info(
-        "Métricas no teste → MAE: R$ %.2f | RMSE: R$ %.2f | MAPE: %.1f%%",
+        "Métricas no teste → MAE: R$ %.2f | RMSE: R$ %.2f | MAPE: %.1f%% "
+        "| erro do horizonte: %.1f%%",
         metricas["mae"],
         metricas["rmse"],
         metricas["mape"],
+        metricas["erro_horizonte"],
     )
+
+    if args.backtest > 0:
+        log.info("Backtest multi-bloque (%d blocos)...", args.backtest)
+        resultado_bt = backtest(df_diario, args.teste_dias, args.backtest)
+        log.info("Backtest concluído: %s", resultado_bt)
 
     # Previsão futura
     previsoes = prever_futuro(modelo, df_diario, args.dias_prever)
@@ -394,7 +594,13 @@ def main() -> None:
     log.info("Previsão futura salva: %s", csv_caminho)
 
     receita_total = float(sum(previsoes))
-    gerar_relatorio(CAMINHO_PREDICOES, metricas, args.dias_prever, receita_total)
+    gerar_relatorio(
+        CAMINHO_PREDICOES,
+        metricas,
+        args.dias_prever,
+        receita_total,
+        gerar_relatorio_backtest(resultado_bt) if args.backtest > 0 else None,
+    )
     gerar_grafico(df_diario, df_fut, metricas)
 
     log.info("=" * 55)

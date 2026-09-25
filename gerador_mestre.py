@@ -134,6 +134,14 @@ PROPORCAO_PJ: float = 0.15  # 15% dos clientes são Pessoa Jurídica
 ANOS_HISTORICO: int = 10  # janela de pedidos: ajuste aqui (ex.: 2, 5, 10)
 DIAS_HISTORICO: int = 365 * ANOS_HISTORICO
 DATA_INICIO = datetime.now() - timedelta(days=DIAS_HISTORICO)
+# Parâmetros de reposição de estoque. O saldo em cada data é dimensionado para
+# cobrir DIAS_COBERTURA_ALVO dias de venda, estimado a partir da demanda dos
+# JANELA_REPOSICAO dias seguintes. O fator multiplica essa meta para simular
+# decisões de compra imperfeitas: com valor abaixo de 1 a loja compra de menos
+# (risco de ruptura), acima de 1 compra demais (capital parado).
+DIAS_COBERTURA_ALVO: int = 60
+JANELA_REPOSICAO: int = 30
+FATOR_COBERTURA: tuple[float, float] = (0.5, 1.8)
 # Multiplicadores de volume de vendas por mês.
 # Valores > 1.0 representam alta temporada; < 1.0, baixa temporada.
 # Referência: Black Friday (nov=1.80), volta às aulas (jan=1.30), Natal (dez=1.50).
@@ -2158,44 +2166,165 @@ def popular_produtos(
     return prods, populares
 
 
+def _datas_snapshot(inicio: date, fim: date) -> list[date]:
+    """Lista as datas de snapshot de estoque: 1º dia de cada mês + o próprio fim.
+
+     A primeira data é sempre o 1º dia do mês seguinte a ``inicio`` (não há
+    saldo conhecido antes disso) e a última é ``fim``, o que garante que o
+     snapshot corrente exista mesmo quando ``fim`` cai no meio do mês.
+
+     Args:
+         inicio: Início da janela histórica (não gera snapshot nele).
+         fim:    Data do snapshot corrente.
+
+     Returns:
+         Lista de datas crescentes.
+    """
+    datas: list[date] = []
+    ano, mes = inicio.year, inicio.month + 1
+    if mes > 12:
+        ano, mes = ano + 1, 1
+    while True:
+        data = date(ano, mes, 1)
+        if data >= fim:
+            break
+        datas.append(data)
+        mes += 1
+        if mes > 12:
+            ano, mes = ano + 1, 1
+    if not datas or datas[-1] != fim:
+        datas.append(fim)
+    return datas
+
+
+def _demanda_janela(
+    vendas_mes: dict[tuple[int, int, int, int], int],
+    id_loja: int,
+    id_prod: int,
+    inicio: date,
+    dias: int,
+) -> int:
+    """Soma as unidades vendidas na janela ``[inicio, inicio + dias)``.
+
+    Args:
+        vendas_mes: Contador ``{(id_loja, id_prod, ano, mes): unidades}``.
+        id_loja:    ID da loja.
+        id_prod:    ID do produto.
+        inicio:     Primeiro dia da janela (inclusive).
+        dias:       Tamanho da janela em dias.
+
+    Returns:
+        Total de unidades vendidas na janela.
+    """
+    total = 0
+    fim = inicio + timedelta(days=dias)
+    cursor = inicio
+    while cursor < fim:
+        chave = (id_loja, id_prod, cursor.year, cursor.month)
+        total += vendas_mes.get(chave, 0)
+        # Avança para o próximo mês, mas para no dia 1 do mês seguinte ao fim
+        # para não contar vendas que caem fora da janela.
+        if cursor.month == 12:
+            proximo = date(cursor.year + 1, 1, 1)
+        else:
+            proximo = date(cursor.year, cursor.month + 1, 1)
+        if proximo >= fim:
+            break
+        cursor = proximo
+    return total
+
+
+def _nivel_estoque(demanda_janela: int, fator: float) -> int:
+    """Converte a demanda de uma janela em um saldo de estoque.
+
+    Args:
+        demanda_janela: Unidades vendidas em ``JANELA_REPOSICAO`` dias.
+        fator:          Multiplicador da meta de cobertura.
+
+    Returns:
+        Saldo de unidades, nunca negativo.
+    """
+    alvo = demanda_janela * DIAS_COBERTURA_ALVO / JANELA_REPOSICAO
+    return max(0, int(round(alvo * fator)))
+
+
 def popular_estoque(
     cur,
     prods: list[tuple[int, float]],
-    populares: set[int],
     loja_ids: list[int],
-) -> None:
-    """Gera os registros de estoque para cada combinação produto × loja.
+    vendas_mes: dict[tuple[int, int, int, int], int],
+    inicio: date,
+    fim: date,
+) -> int:
+    """Gera o histórico de snapshots de estoque (produto × loja × data).
 
-    A quantidade inicial é proporcional à faixa de preço (produtos mais
-    caros têm estoque menor) e aumentada em 50% para produtos populares.
+    Cada snapshot é dimensionado para cobrir ``DIAS_COBERTURA_ALVO`` dias de
+    venda, usando como estimativa a demanda dos ``JANELA_REPOSICAO`` dias
+    seguintes. Para o snapshot corrente não existe demanda futura observada,
+    então a estimativa usa a demanda dos dias **anteriores** (persistência) —
+    é o que um planejador teria à mão.
+
+    O saldo nasce da demanda real dos pedidos, e não de um número arbitrário:
+    é isso que torna a cobertura de estoque mensurável. Antes o estoque era
+    um snapshot estático que nunca diminuía, então qualquer alerta de ruptura
+    era ruído.
 
     Args:
-        cur:       Cursor MySQL ativo.
-        prods:     Lista de ``(id_produto, preco_venda, preco_custo)``.
-        populares: Conjunto de IDs de produtos com alta rotatividade.
-        loja_ids:  Lista de IDs de lojas.
+        cur:        Cursor MySQL ativo.
+        prods:      Lista de ``(id_produto, preco_venda, preco_custo)``.
+        loja_ids:   Lista de IDs de lojas.
+        vendas_mes: Contador ``{(id_loja, id_prod, ano, mes): unidades}``.
+        inicio:     Início da janela histórica.
+        fim:        Data do snapshot corrente.
+
+    Returns:
+        Quantidade de snapshots gravados.
     """
-    # Estoque base por faixa de preço
-    estoque_base = {"ULTRA": 4, "HIGH": 20, "MID": 50, "LOW": 100}
+    datas = _datas_snapshot(inicio, fim)
+    log.info(
+        "Gerando estoque temporal: %d datas × %d produtos × %d lojas...",
+        len(datas),
+        len(prods),
+        len(loja_ids),
+    )
 
-    dados = []
-    hoje = datetime.now().date()
+    # Um fator por par produto × loja: a decisão de reposição do par é estável
+    # ao longo do tempo, mas varia entre pares.
+    fatores = {
+        (id_prod, id_loja): random.uniform(*FATOR_COBERTURA)
+        for id_prod, _, _ in prods
+        for id_loja in loja_ids
+    }
 
-    for id_prod, preco, _custo in prods:
-        base = estoque_base[_ticket(preco)]
-        for id_loja in loja_ids:
-            qtd = int(base * random.uniform(0.3, 1.7))
-            if id_prod in populares:
-                qtd = int(qtd * 1.5)  # produtos populares têm mais estoque
-            dados.append((id_prod, id_loja, max(0, qtd), hoje))
-
-    for i in range(0, len(dados), 500):
-        cur.executemany(
-            "INSERT INTO estoque "
-            "(id_produto, id_loja, quantidade, ultima_atualizacao) "
-            "VALUES (%s, %s, %s, %s)",
-            dados[i : i + 500],
+    def demanda_para(id_loja: int, id_prod: int, data: date, eh_final: bool) -> int:
+        """Demanda estimada para dimensionar o snapshot em ``data``."""
+        if eh_final:
+            # Sem futuro observado: usa a janela anterior como proxy.
+            inicio_janela = data - timedelta(days=JANELA_REPOSICAO)
+        else:
+            inicio_janela = data
+        return _demanda_janela(
+            vendas_mes, id_loja, id_prod, inicio_janela, JANELA_REPOSICAO
         )
+
+    dados: list[tuple] = []
+    for data in datas:
+        eh_final = data == datas[-1]
+        for id_prod, _, _ in prods:
+            for id_loja in loja_ids:
+                demanda = demanda_para(id_loja, id_prod, data, eh_final)
+                qtd = _nivel_estoque(demanda, fatores[(id_prod, id_loja)])
+                dados.append((id_prod, id_loja, data, qtd))
+
+    for i in range(0, len(dados), 2000):
+        cur.executemany(
+            "INSERT INTO estoque (id_produto, id_loja, data, quantidade) "
+            "VALUES (%s, %s, %s, %s)",
+            dados[i : i + 2000],
+        )
+
+    log.info("%d snapshots de estoque gravados.", len(dados))
+    return len(dados)
 
 
 def popular_funcionarios(cur, loja_ids: list[int]) -> dict[int, list[int]]:
@@ -2539,7 +2668,7 @@ def popular_pedidos(
     pf_ids: list[int],
     pj_ids: list[int],
     recentes: dict[int, date],
-) -> None:
+) -> dict[tuple[int, int, int, int], int]:
     """Gera pedidos e itens simulando comportamento realista de compra.
 
     Segmenta os clientes em três grupos comportamentais:
@@ -2565,6 +2694,11 @@ def popular_pedidos(
         pj_ids:        IDs de clientes Pessoa Jurídica.
         recentes:      Clientes recentes (mapeamento id → data de cadastro),
                        usados apenas na anomalia temporal.
+
+    Returns:
+        Contador ``{(id_loja, id_produto, ano, mês): unidades}`` com as
+        unidades efetivamente vendidas (cancelamentos não consomem estoque).
+        É a entrada do histórico de estoque, gerado depois desta etapa.
     """
     cur.execute("SELECT id_loja, tipo FROM loja")
     lojas = cur.fetchall()
@@ -2587,6 +2721,8 @@ def popular_pedidos(
     gerados = 0
     ped_buf: list[tuple] = []
     item_buf: list[list[tuple]] = []
+    # Consumo de estoque derivado dos pedidos reais (cancelados não consomem).
+    vendas_mes: dict[tuple[int, int, int, int], int] = {}
     textos_obs = [
         "Entrega em horário comercial",
         "Cliente preferencial",
@@ -2659,6 +2795,13 @@ def popular_pedidos(
         valor_final = round(valor_bruto - valor_desconto, 2)
 
         obs = random.choice(textos_obs) if random.random() < RUIDO_OBS else None
+
+        if status != "Cancelado":
+            ano_mes = (id_loja, data.year, data.month)
+            for id_prod_item, qtd_item, _, _ in itens:
+                chave = (ano_mes[0], id_prod_item, ano_mes[1], ano_mes[2])
+                vendas_mes[chave] = vendas_mes.get(chave, 0) + qtd_item
+
         ped_buf.append(
             (
                 id_cli,
@@ -2689,6 +2832,7 @@ def popular_pedidos(
         _flush(cur, ped_buf, item_buf)
 
     log.info("%d pedidos gerados.", gerados)
+    return vendas_mes
 
 
 def _flush(cur, peds: list[tuple], items: list[list[tuple]]) -> None:
@@ -2784,10 +2928,6 @@ def main() -> None:
             prods, populares = popular_produtos(cur, forn_ids)
             conn.commit()
 
-            log.info("Populando estoque...")
-            popular_estoque(cur, prods, populares, loja_ids)
-            conn.commit()
-
             log.info("Populando funcionários...")
             vend = popular_funcionarios(cur, loja_ids)
             conn.commit()
@@ -2806,9 +2946,26 @@ def main() -> None:
             log.info("Base e clientes populados (sem pedidos) com sucesso!")
             log.info("Clientes  : %d (PF + PJ)", NUM_CLIENTES)
             log.info("=" * 55)
+            log.info("O estoque é gerado no passo --pedidos (depende das vendas).")
         else:
             log.info("Gerando %d pedidos...", NUM_PEDIDOS)
-            popular_pedidos(cur, prods, populares, vend, pf_ids, pj_ids, recentes)
+            vendas_mes = popular_pedidos(
+                cur, prods, populares, vend, pf_ids, pj_ids, recentes
+            )
+            conn.commit()
+
+            # Estoque depende das vendas: só faz sentido depois dos pedidos.
+            log.info("Populando estoque temporal...")
+            cur.execute("SELECT id_loja FROM loja")
+            loja_ids = [linha[0] for linha in cur.fetchall()]
+            popular_estoque(
+                cur,
+                prods,
+                loja_ids,
+                vendas_mes,
+                DATA_INICIO.date(),
+                datetime.now().date(),
+            )
             conn.commit()
 
             log.info("=" * 55)

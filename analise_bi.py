@@ -72,6 +72,20 @@ CAMINHO_ANALISES: Path = Path(__file__).parent / "output" / "analises"
 # Status considerados como venda efetiva (os demais são tratados à parte)
 STATUS_ATIVO: tuple[str, ...] = ("Concluído", "Enviado", "Processando")
 
+# Janela de demanda usada para medir o giro diário do estoque
+JANELA_GIRO_DIAS: int = 90
+
+# Limiares de cobertura, ambos em DIAS de estoque (a mesma unidade da coluna
+# cobertura_dias). Misturar um limiar em dias com um multiplicador sobre a
+# mediana produz limiares effective de 60 e 270 dias — o segundo nunca dispara
+# numa distribuição cujo máximo é ~215 dias, ou seja, um branch morto.
+#
+# Calibrado contra a distribuição real gerada (mediana ~105 dias, p5 ~59,
+# máximo ~216): 60 dias isola a cauda mal posicionada e 180 pega o extremo
+# alto, que é capital parado.
+LIMIAR_RUPTURA_DIAS: int = 60
+LIMIAR_EXCESSO_DIAS: int = 180
+
 
 # ---------------------------------------------------------------------------
 # Carregamento e utilitários
@@ -551,9 +565,11 @@ def saude_estoque(estoque: pd.DataFrame, vendas: pd.DataFrame) -> pd.DataFrame:
     """Calcula cobertura de estoque e alertas de ruptura/excesso.
 
     Usa o estoque total da rede (``estoque_total_rede``) contra o giro médio
-    diário de cada produto. Produtos sem estoque suficiente para o giro são
-    sinalizados como ruptura; os com cobertura muito acima da mediana, como
-    excesso de capital parado.
+    diário de cada produto, medido na janela de ``JANELA_GIRO_DIAS`` dias mais
+    recente. Produtos sem estoque suficiente para o giro são sinalizados como
+    ruptura; os com cobertura muito acima da mediana, como excesso de capital
+    parado. Produtos sem nenhuma venda na janela recebem "SEM DEMANDA", pois a
+    cobertura é indefinível (divisão por giro zero).
 
     Args:
         estoque: DataFrame produtos × loja (com estoque_total_rede).
@@ -563,14 +579,15 @@ def saude_estoque(estoque: pd.DataFrame, vendas: pd.DataFrame) -> pd.DataFrame:
         DataFrame com um registro por produto e seu status de cobertura.
     """
     ativas = vendas[vendas["status"].isin(STATUS_ATIVO)].copy()
-    # Giro medido nos últimos 90 dias (demanda recente) — não no histórico
-    # inteiro, que esconderia rupturas/cobertura do estoque atual.
+    # Giro medido nos últimos JANELA_GIRO_DIAS (demanda recente) — não no
+    # histórico inteiro, que esconderia rupturas/cobertura do estoque atual.
     data_ref = ativas["data_pedido"].max()
-    recentes = ativas[ativas["data_pedido"] >= data_ref - pd.Timedelta(days=90)]
-    janela_recente_dias = (
-        recentes["data_pedido"].max() - recentes["data_pedido"].min()
-    ).days
-    n_dias = max(janela_recente_dias, 1)
+    recentes = ativas[
+        ativas["data_pedido"] >= data_ref - pd.Timedelta(days=JANELA_GIRO_DIAS)
+    ]
+    # A janela é fixa, não o span observado: dias sem venda encolheriam o
+    # denominador e inflariam artificialmente o giro diário.
+    n_dias = JANELA_GIRO_DIAS
 
     giro = recentes.groupby("id_produto", as_index=False).agg(
         quantidade_vendida=("quantidade", "sum")
@@ -587,22 +604,30 @@ def saude_estoque(estoque: pd.DataFrame, vendas: pd.DataFrame) -> pd.DataFrame:
         final["estoque_total"] / final["giro_diario"].replace(0, np.nan)
     ).round(1)
 
-    mediana = final["cobertura_dias"].median(skipna=True)
+    # A condição isna() precisa vir PRIMEIRA: sem ela o NaN cai no default e um
+    # produto sem nenhuma venda nos últimos 90 dias seria rotulado "SAUDÁVEL",
+    # que é exatamente o oposto do alerta correto.
     final["alerta"] = np.select(
         [
-            final["cobertura_dias"] <= 30,
-            final["cobertura_dias"] > mediana * 3,
+            final["cobertura_dias"].isna(),
+            final["cobertura_dias"] <= LIMIAR_RUPTURA_DIAS,
+            final["cobertura_dias"] >= LIMIAR_EXCESSO_DIAS,
         ],
-        ["RISCO DE RUPTURA", "EXCESSO DE CAPITAL"],
+        ["SEM DEMANDA", "RISCO DE RUPTURA", "EXCESSO DE CAPITAL"],
         default="SAUDÁVEL",
     )
 
     _salvar_csv(final, "saude_estoque.csv")
     log.info(
-        "[Estoque] saudável=%d | ruptura=%d | excesso=%d",
+        "[Estoque] saudável=%d | ruptura=%d | excesso=%d | sem demanda=%d "
+        "(limiares: ruptura<=%dd | excesso>=%dd | mediana=%.0fd)",
         (final["alerta"] == "SAUDÁVEL").sum(),
         (final["alerta"] == "RISCO DE RUPTURA").sum(),
         (final["alerta"] == "EXCESSO DE CAPITAL").sum(),
+        (final["alerta"] == "SEM DEMANDA").sum(),
+        LIMIAR_RUPTURA_DIAS,
+        LIMIAR_EXCESSO_DIAS,
+        final["cobertura_dias"].median(skipna=True),
     )
     return final
 
@@ -712,6 +737,8 @@ def escrever_relatorio(
     pct_m = float(campeoes["%_monetario"].sum()) if not campeoes.empty else 0.0
     n_cat_a = int((abc_xyz_["abc"] == "A").sum())
     ruptura = int((estoque["alerta"] == "RISCO DE RUPTURA").sum())
+    sem_demanda = int((estoque["alerta"] == "SEM DEMANDA").sum())
+    excesso = int((estoque["alerta"] == "EXCESSO DE CAPITAL").sum())
     pior_canal = cancel.iloc[0]
 
     linhas = [
@@ -740,7 +767,9 @@ def escrever_relatorio(
         f"   Produtos classe A: {n_cat_a} — ver abc_xyz_produtos.csv.",
         "",
         "6. Saúde de estoque",
-        f"   Risco de ruptura: {ruptura} produtos — saude_estoque.csv.",
+        f"   Risco de ruptura: {ruptura} produtos (cobertura <= "
+        f"{LIMIAR_RUPTURA_DIAS} dias) — saude_estoque.csv.",
+        f"   Excesso de capital: {excesso} | Sem demanda na janela: {sem_demanda}.",
         "",
         "7. Cancelamento por canal",
         f"   Pior canal: {pior_canal['canal']} "

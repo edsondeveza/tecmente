@@ -145,6 +145,10 @@ def _executar_e_gravar(
 
     Returns:
         Número de linhas escritas (excluindo cabeçalho).
+
+    Raises:
+        mysql.connector.Error: Se a query falhar.
+        RuntimeError: Se a gravação falhar ou a query vier vazia.
     """
     inicio = time.time()
 
@@ -153,13 +157,12 @@ def _executar_e_gravar(
         colunas = [d[0] for d in cur.description]
         rows = cur.fetchall()
 
-    except mysql.connector.Error as e:
-        logger.error(f"Erro de banco ao executar {nome_arquivo}: {e}")
-        return 0
-
-    except Exception as e:
-        logger.error(f"Erro inesperado em {nome_arquivo}: {e}")
-        return 0
+    except mysql.connector.Error:
+        # Propaga de propósito: um CSV de 0 linhas deixaria o arquivo antigo
+        # da execução anterior no lugar, e o tratamento consumiria dado velho
+        # sem nenhum sinal de que a extração falhou.
+        logger.error(f"Erro de banco ao executar {nome_arquivo}")
+        raise
 
     try:
         with open(caminho, "w", newline="", encoding=ENCODING) as f:
@@ -169,7 +172,13 @@ def _executar_e_gravar(
 
     except OSError as e:
         logger.error(f"Erro ao gravar arquivo {nome_arquivo}: {e}")
-        return 0
+        raise RuntimeError(f"Falha ao gravar {nome_arquivo}") from e
+
+    if not rows:
+        # Toda tabela de origem deste projeto é populada pelo gerador; zero
+        # linha significa query errada, não "não há dados".
+        logger.error(f"{nome_arquivo}: query retornou 0 linhas (suspeito)")
+        raise RuntimeError(f"{nome_arquivo} veio vazio — revise a query")
 
     elapsed = time.time() - inicio
     logger.info(f"  {nome_arquivo:<25} {len(rows):>8,} linhas ({elapsed:.1f}s)")
@@ -264,6 +273,11 @@ def extrair_produtos_estoque(
 ) -> int:
     """Extrai produtos com estoque por loja — campos originais do banco.
 
+    ``estoque`` é temporal (um snapshot por produto × loja × data). Aqui só
+    interessa o snapshot mais recente de cada par, que é o saldo corrente.
+    Trazer todo o histórico duplicaria cada linha ~120 vezes e quebraria a
+    consolidação por produto feita no tratamento.
+
     Args:
         cur:    Cursor MySQL ativo.
         pasta:  Pasta de destino.
@@ -294,13 +308,27 @@ def extrair_produtos_estoque(
             l.id_loja,
             l.nome          AS loja_nome,
             l.tipo          AS loja_tipo,
-            e.quantidade    AS estoque_qtd,
-            e.ultima_atualizacao
+            e_snap.quantidade AS estoque_qtd,
+            e_snap.data     AS estoque_data
         FROM produto p
         JOIN categoria  cat ON p.id_categoria  = cat.id_categoria
         JOIN fornecedor f   ON p.id_fornecedor = f.id_fornecedor
-        JOIN estoque    e   ON p.id_produto    = e.id_produto
-        JOIN loja       l   ON e.id_loja       = l.id_loja
+        JOIN (
+            SELECT id_produto, id_loja, data, quantidade
+            FROM (
+                SELECT
+                    id_produto,
+                    id_loja,
+                    data,
+                    quantidade,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY id_produto, id_loja ORDER BY data DESC
+                    ) AS rn
+                FROM estoque
+            ) AS ranked
+            WHERE rn = 1
+        ) AS e_snap ON e_snap.id_produto = p.id_produto
+        JOIN loja       l   ON e_snap.id_loja  = l.id_loja
         ORDER BY cat.nome_pai, cat.nome, p.nome, l.nome
     """
     return _executar_e_gravar(
@@ -511,8 +539,8 @@ def main() -> None:
         for nome, func, args_func in extracoes:
             try:
                 totais[nome] = func(*args_func)
-            except Exception:
-                logger.exception(f"Erro na etapa: {nome}")
+            except Exception as e:
+                logger.exception(f"Erro na etapa: {nome} — {e}")
                 erros.append(nome)
                 totais[nome] = 0
 

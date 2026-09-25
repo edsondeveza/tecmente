@@ -234,13 +234,110 @@ class TestAbcXyz:
 
 
 class TestSaudeEstoque:
+    def _vendas_estoque(
+        self, produtos: dict[int, int], ref: str = "2026-09-20"
+    ) -> pd.DataFrame:
+        """Vendas de um dia dentro da janela de giro, uma linha por produto.
+
+        ``produtos`` mapeia id_produto -> quantidade vendida no dia da
+        ``ref``. A data é fixada para que a janela de 90 dias da função
+        seja sempre determinística.
+        """
+        return pd.DataFrame(
+            {
+                "id_pedido": range(1, len(produtos) + 1),
+                "id_cliente": [10] * len(produtos),
+                "id_produto": list(produtos),
+                "quantidade": list(produtos.values()),
+                "preco_venda": [50.0] * len(produtos),
+                "subtotal": [50.0 * q for q in produtos.values()],
+                "status": ["Concluído"] * len(produtos),
+                "canal": ["Site"] * len(produtos),
+                "data_pedido": pd.to_datetime([ref] * len(produtos)),
+            }
+        )
+
+    def _estoque(self, produtos: dict[int, int]) -> pd.DataFrame:
+        """Estoque com uma linha por produto, com estoque_total_rede."""
+        return pd.DataFrame(
+            {
+                "id_produto": list(produtos),
+                "estoque_total_rede": list(produtos.values()),
+                "preco_venda": [50.0] * len(produtos),
+                "id_loja": [1] * len(produtos),
+                "margem_pct": [40.0] * len(produtos),
+            }
+        )
+
     def test_gera_status_por_produto(self) -> None:
         resultado = saude_estoque(_estoque_fake(), _vendas_fake())
         assert len(resultado) == _estoque_fake()["id_produto"].nunique()
         assert set(resultado["alerta"]).issubset(
-            {"SAUDÁVEL", "RISCO DE RUPTURA", "EXCESSO DE CAPITAL"}
+            {"SAUDÁVEL", "RISCO DE RUPTURA", "EXCESSO DE CAPITAL", "SEM DEMANDA"}
         )
         assert "cobertura_dias" in resultado.columns
+
+    def test_produto_sem_venda_na_janela_vira_sem_demanda(self) -> None:
+        """Regressão: giro 0 produz cobertura NaN, que caía no default do
+        np.select e recebia "SAUDÁVEL" — o oposto do alerta correto."""
+        # Produto 1 vende 5/dia na janela de 90 dias => giro 5/90, e com
+        # estoque 1 a cobertura fica em 18 dias (abaixo do limiar de 60).
+        # Produto 2 não vende nada e tem estoque 10 => cobertura NaN.
+        estoque = self._estoque({1: 1, 2: 10})
+        vendas = self._vendas_estoque({1: 5})
+        resultado = saude_estoque(estoque, vendas).set_index("id_produto")
+        assert resultado.loc[1, "alerta"] == "RISCO DE RUPTURA"
+        assert resultado.loc[2, "alerta"] == "SEM DEMANDA"
+
+    def test_limiar_de_ruptura_dispara(self) -> None:
+        """Cobertura abaixo do limiar tem de virar RISCO DE RUPTURA.
+
+        Com a janela fixa em 90 dias, 5 unidades vendidas dão giro 5/90:
+        estoque 10 => 180 dias (excesso, o topo da escala); estoque 1 =>
+        18 dias (ruptura).
+        """
+        estoque = self._estoque({1: 10, 2: 1})
+        vendas = self._vendas_estoque({1: 5, 2: 5})
+        resultado = saude_estoque(estoque, vendas).set_index("id_produto")
+        assert resultado.loc[1, "cobertura_dias"] == 180.0
+        assert resultado.loc[1, "alerta"] == "EXCESSO DE CAPITAL"
+        assert resultado.loc[2, "cobertura_dias"] == 18.0
+        assert resultado.loc[2, "alerta"] == "RISCO DE RUPTURA"
+
+    def test_limiares_sao_limites_inclusivos_e_exclusivos(self) -> None:
+        """Regressão: os dois limiares vivem em dias, então as fronteiras
+        precisam ficar explícitas — 60 dias ainda é ruptura, 61 é saudável;
+        180 dias já é excesso, 179 ainda é saudável.
+
+        90 unidades em 90 dias dão giro de 1/dia, então a cobertura em dias é
+        exatamente o estoque — as fronteiras ficam testáveis sem arredondar.
+        """
+        estoque = self._estoque({1: 60, 2: 61, 3: 180, 4: 179})
+        vendas = self._vendas_estoque({1: 90, 2: 90, 3: 90, 4: 90})
+        resultado = saude_estoque(estoque, vendas).set_index("id_produto")
+        assert resultado.loc[1, "cobertura_dias"] == 60.0
+        assert resultado.loc[1, "alerta"] == "RISCO DE RUPTURA"
+        assert resultado.loc[2, "alerta"] == "SAUDÁVEL"
+        assert resultado.loc[3, "cobertura_dias"] == 180.0
+        assert resultado.loc[3, "alerta"] == "EXCESSO DE CAPITAL"
+        assert resultado.loc[4, "alerta"] == "SAUDÁVEL"
+
+    def test_janela_de_giro_e_fixa_em_90_dias(self) -> None:
+        """Regressão do divisor: a janela é a constante de 90 dias, não o
+        span observado entre a primeira e a última venda da janela."""
+        vendas_a = self._vendas_estoque({1: 90}, ref="2026-09-20")
+        vendas_b = self._vendas_estoque({1: 90}, ref="2026-09-18")
+        combine = pd.concat([vendas_a, vendas_b])
+        resultado = saude_estoque(self._estoque({1: 90}), combine)
+        # 180 unidades em 90 dias = giro 2/dia => cobertura 45 dias.
+        assert resultado.loc[0, "cobertura_dias"] == 45.0
+
+    def test_excesso_detectado_acima_do_limiar_de_dias(self) -> None:
+        """Cobertura muito acima do limiar de dias vira EXCESSO DE CAPITAL."""
+        estoque = self._estoque({1: 100, 2: 100, 3: 100_000})
+        vendas = self._vendas_estoque({1: 10, 2: 10, 3: 10})
+        resultado = saude_estoque(estoque, vendas).set_index("id_produto")
+        assert resultado.loc[3, "alerta"] == "EXCESSO DE CAPITAL"
 
 
 # =============================================================================

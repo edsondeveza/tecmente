@@ -52,7 +52,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.pytest.ini_options]
-addopts = "--cov=analise_bi --cov=previsor --cov=tratador --cov=pipeline --cov=tecmente.dados --cov-fail-under=40"
+addopts = "--cov=analise_bi --cov=previsor --cov=tratador --cov=pipeline --cov=tecmente.dados --cov=tecmente.tecmente_cli --cov=gerador_mestre --cov-fail-under=55"
 testpaths = ["tests"]
 
 [build-system]

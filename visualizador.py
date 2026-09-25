@@ -14,11 +14,11 @@ Fontes suportadas (chaveadas por FONTE):
     "csv" → lê os CSVs tratados em CAMINHO_DADOS
     "sql" → consulta as views analíticas do banco via MySQL
 
-Saída (Fase 1 — Matplotlib/Seaborn):
-    PNGs salvos em output/graficos/
+Saída:
+    8 PNGs em output/graficos/ (d01..d06 + d07_rfm_scatter + d07_rfm_heatmap)
 
-Saída (Fase 2 — Plotly, futura):
-    HTML interativo salvo em output/relatorios/
+A camada interativa (Plotly) fica a cargo de visualizador_interativo.py,
+    que grava os 8 HTMLs em output/relatorios/.
 
 Uso:
     python visualizador.py

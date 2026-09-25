@@ -25,8 +25,8 @@ A **TecMente** é uma empresa fictícia de e-commerce de informática criada exc
 | Manipulação de dados   | pandas                 |
 | Geração de dados       | Faker                  |
 | Conexão com banco      | mysql-connector-python |
-| Visualização (Fase 1)  | matplotlib, seaborn    |
-| Visualização (Fase 2)  | Plotly                  |
+| Visualização estática   | matplotlib, seaborn    |
+| Visualização interativa | Plotly                  |
 | Machine Learning       | scikit-learn            |
 | Automação do fluxo     | pipeline.py (subprocess) |
 
@@ -134,7 +134,7 @@ pipeline.py --prever --bi
 | `loja`         | 6 lojas da rede (físicas e online)       |
 | `departamento` | Departamentos da empresa                 |
 | `produto`      | 154 produtos com descrição por template  |
-| `estoque`      | Quantidade por produto por loja          |
+| `estoque`      | Saldo por produto × loja × data (temporal) |
 | `funcionario`  | 80 funcionários distribuídos nas lojas   |
 | `cliente`      | 10.000 clientes PF e PJ (15% PJ)         |
 | `pedido`       | 100.000 pedidos com sazonalidade e canais |
@@ -170,6 +170,13 @@ O `gerador_mestre.py` gera dados com **ruído realista intencional** para exerci
 - Concentração geográfica: ~26% dos clientes em SP e ~12% em MG (onde ficam as lojas), com capilaridade nas demais UFs
 - Sazonalidade intra-semana: dias úteis com mais vendas (segunda a sexta ~+5-8%), sábado ~-5%, domingo ~-27%
 - Margem bruta **variável por faixa de preço e categoria**: LOW 45–55%, MID 38–48%, HIGH 30–40%, ULTRA 22–32%, com ajustes por grupo de categoria (ex.: Cabos e Adaptadores +4pp, Notebooks e Laptops −2pp) — o custo do item no pedido é idêntico ao custo cadastrado do produto
+- **Estoque temporal derivado da demanda real**: a tabela `estoque` guarda um snapshot por produto × loja × data (154 × 6 × 121 datas ≈ 112 mil linhas). Cada saldo é dimensionado para cobrir 60 dias de venda, estimado pela demanda dos 30 dias seguintes, com um fator de reposição por par produto/loja entre 0,5 e 1,8 — é esse fator que gera a dispersão de cobertura (mediana ~105 dias) e faz os alertas de ruptura e excesso serem distinguíveis. Pedidos cancelados não consomem estoque.
+
+### Por que o estoque é temporal
+
+Um snapshot único de saldo é um número sem significado: com 10 anos de histórico, todo produto que já vendeu teria estoque zero, e todo produto parado teria estoque intacto. Os dois casos viram ruído, e um alerta de ruptura calculado sobre isso não diz nada.
+
+Guardando o saldo ao longo do tempo, a cobertura em dias passa a ser comparável ao giro real do período, e a pergunta "este SKU está mal posicionado?" tem resposta verificável. O extrator lê apenas o snapshot corrente (`ROW_NUMBER()` por produto/loja) para não duplicar as linhas.
 
 ### Catálogo de ruído
 
@@ -195,7 +202,15 @@ Todas as taxas de ruído são controláveis por constantes no topo de `gerador_m
 
 ## Regras de negócio
 
-Regras comerciais implementadas no `gerador_mestre.py` e verificadas pelo `validador_coerencia.py`:
+Regras comerciais implementadas no `gerador_mestre.py` e verificadas pelo `validador_coerencia.py` (19 verificações):
+
+### Estoque temporal
+
+- A tabela `estoque` é um **histórico de saldos**: uma linha por produto × loja × data.
+- O saldo em cada data é dimensionado para cobrir `DIAS_COBERTURA_ALVO` (60) dias de venda, usando a demanda dos `JANELA_REPOSICAO` (30) dias seguintes; no snapshot corrente, que não tem futuro observado, usa a demanda dos 30 dias anteriores.
+- Um fator de reposição por par produto × loja (0,5 a 1,8) simula decisões de compra imperfeitas: comprar de menos gera risco de ruptura, comprar demais gera capital parado.
+- Pedidos **Cancelados não consomem estoque** — o consumo é derivado do que foi efetivamente vendido.
+- Nenhum saldo é negativo.
 
 ### Desconto por tipo de loja
 
@@ -255,8 +270,11 @@ cp .env.example .env
 ## Uso
 
 ```bash
-# Popula o banco completo
-poetry run python gerador_mestre.py
+# Popula o banco: dois passos obrigatórios e na ordem.
+# --clientes cria as dimensões, produtos, funcionários e clientes;
+# --pedidos gera os pedidos E o estoque temporal (que depende das vendas).
+poetry run python gerador_mestre.py --clientes
+poetry run python gerador_meste.py --pedidos
 
 # Extração semanal (todo o histórico)
 poetry run python extrator.py
@@ -268,7 +286,7 @@ poetry run python extrator.py --dias 7
 poetry run python tratador.py
 
 # Tratamento de uma data específica
-poetry run python tratador.py --data 2026-03-17
+poetry run python tratador.py --data 2026-09-23
 
 # Geração dos dashboards estáticos
 poetry run python visualizador.py
@@ -350,7 +368,7 @@ Responsabilidade do time de BI. Lê os CSVs tratados (ou consulta as views do ba
 
 O caminho dos dados é resolvido automaticamente — sempre aponta para a pasta `_tratado` mais recente em `data/`, sem necessidade de alterar o código entre execuções semanais.
 
-Dashboards gerados (Fase 1 — Matplotlib/Seaborn):
+Dashboards gerados (matplotlib/seaborn):
 
 | Arquivo                             | Descrição                                         |
 | ----------------------------------- | ------------------------------------------------- |
@@ -363,13 +381,13 @@ Dashboards gerados (Fase 1 — Matplotlib/Seaborn):
 | `d07_rfm_scatter.png`               | Dispersão RFM — Recência × Frequência × Valor     |
 | `d07_rfm_heatmap.png`               | Heatmap RFM — valor total por segmento R × F      |
 
-**Status v2.0:** Todos os 7 dashboards implementados e validados. ✅
+**Status v2.0:** Todos os 7 dashboards implementados e validados (8 PNGs — o dashboard 07 gera scatter + heatmap). ✅
 
 ### `visualizador_interativo.py`
 
 Versão interativa (Plotly) do mesmo conjunto de dashboards, gerando **HTML** que abre no navegador (`output/relatorios/*.html`). Usa os mesmos dados tratados/views, com tooltips, filtros e responsividade.
 
-Dashboards gerados (Fase 2 — Plotly):
+Dashboards gerados (Plotly):
 
 | Arquivo                                        | Descrição                                       |
 | ---------------------------------------------- | ----------------------------------------------- |
@@ -389,7 +407,26 @@ Previsão de vendas com **Random Forest** (scikit-learn). Agrega a receita diár
 
 Saídas em `output/predicoes/`: CSV com a previsão (`previsao_vendas.csv`), relatório (`relatorio_previsao.txt`) e gráfico HTML (`previsao_vendas.html`).
 
-**Status v1.0:** Treino/teste com métricas MAE, RMSE e MAPE; funções testadas isoladamente. ✅
+**Métricas — leia o horizonte, não só o dia.** O relatório traz três leituras do mesmo erro, porque elas respondem perguntas diferentes:
+
+| Métrica           | O que mede                                        | Por que importa                                                                                             |
+| ----------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| MAE / RMSE        | erro médio por dia (R$)                          | escala do erro típico; RMSE penaliza dias muito errados                                                    |
+| MAPE diário       | média dos erros **percentuais** individuais        | pune dia de baixa receita tanto quanto dia de venda grande — tenders a parecer ruim                         |
+| WAPE              | erro percentual **ponderado pelo volume**         | neutraliza esse viés                                                                                         |
+| **Erro do horizonte** | erro na **soma** do período (%)                | é a decisão real: "quanto vou faturar nos próximos N dias"                                                   |
+
+Um MAPE diário alto com erro de horizonte baixo não é contradição — os erros individuais se cancelam no somatório, e dias de baixa receita (fim de semana) inflam a média percentual. Ambos os números são honestos; contam coisas diferentes.
+
+**Baseline e backtest.** Uma janela de teste única é frágil: ela costuma cair numa faixa sazonalmente atípica e vira ruído. Use `--backtest N` para avaliar o modelo em N blocos de `--teste_dias` e comparar com um baseline ingênuo de sazonalidade (mediana de mês × dia da semana):
+
+```bash
+poetry run python previsor.py --backtest 6    # 6 blocos de 30 dias
+```
+
+O relatório registra as duas colunas lado a lado. Se o modelo não supera o baseline consistentemente, ele não está agregando nada sobre a sazonalidade pura — e o número diz isso em vez de esconder.
+
+**Status v1.1:** métricas MAE/RMSE/MAPE/WAPE + erro de horizonte, baseline sazonal e backtest multi-bloque opcional; 27 testes unitários. ✅
 
 ### `analise_bi.py`
 
@@ -407,7 +444,9 @@ Módulo de análises avançadas de BI (papel: Analista de BI Sênior) que lê os
 
 Um relatório consolidado (`relatorio_analises.txt`) resume os principais achados. A análise respeita o valor real do pedido mesmo quando o CSV repete `valor_total` por item — via agregação no nível de pedido antes das somas.
 
-**Status v1.0:** 7 análises implementadas e testadas (11 testes unitários). ✅
+A saúde de estoque compara a cobertura em dias contra dois limiares, ambos na mesma unidade (60 e 180 dias). Misturar um limiar em dias com um multiplicador sobre a mediana produz limiares de 60 e 270 dias — e 270 nunca dispara numa distribuição cujo máximo é ~215, ou seja, um alerta que nunca aparece no relatório. Na base atual: 139 saudáveis, 9 em risco de ruptura, 5 em excesso de capital e 1 sem demanda.
+
+**Status v1.1:** 7 análises implementadas e testadas (17 testes unitários). ✅
 
 ### `pipeline.py`
 
@@ -438,6 +477,16 @@ Análise baseada no princípio de Pareto, destacando as categorias responsáveis
 Comparação entre faturamento total e ticket médio por produto, destacando itens acima e abaixo da média.
 
 ![Top Produtos](docs/imagens/d06_produtos_ticket_medio.png)
+
+> **Sobre as imagens:** apenas 2 dos 8 PNGs gerados pelo `visualizador.py` são
+> versionados aqui, de propósito, para manter o `README.md` leve. As seções de
+> insight abaixo descrevem os 7 dashboards, mas só 2 trazem figura. Para ver
+> todos, gere localmente:
+>
+> ```bash
+> poetry run python visualizador.py            # -> output/graficos/*.png (8 arquivos)
+> poetry run python visualizador_interativo.py  # -> output/relatorios/*.html (8 arquivos)
+> ```
 
 ## 📊 Insights dos Dashboards
 
@@ -526,14 +575,15 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 | Etapa               | Script                          | Status          | Validado em |
 | ------------------- | ------------------------------- | --------------- | ----------- |
 | Schema do banco     | `tecmente_schema.sql`           | ✅ Concluído     | 2026-04-13  |
-| Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-09-18  |
+| Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-09-25  |
 | Extração DBA        | `extrator.py`                   | ✅ Concluído     | 2026-04-13 |
 | Tratamento Analista | `tratador.py`                   | ✅ Concluído     | 2026-04-13 |
 | Entrega ao BI       | `visualizador.py`               | ✅ Concluído     | 2026-04-13 |
 | Dashboards Plotly   | `visualizador_interativo.py`    | ✅ Concluído     | 2026-09-14 |
-| Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-14 |
+| Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-25 |
 | Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-18 |
 | Análises de BI      | `analise_bi.py`                 | ✅ Concluído     | 2026-09-18 |
+| Coerência dos dados | `validador_coerencia.py`        | ✅ Concluído     | 2026-09-25 |
 
 ---
 
@@ -542,8 +592,8 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 ### Evoluções planejadas
 
 - [x] Entrega ao BI — Python (matplotlib / seaborn)
-- [x] Visualizações estáticas — 7 dashboards em PNG
-- [x] Visualizações interativas — Plotly (7 dashboards HTML)
+- [x] Visualizações estáticas — 7 dashboards em 8 PNGs
+- [x] Visualizações interativas — Plotly (7 dashboards em 8 HTMLs)
 - [x] Análise preditiva de vendas — Random Forest (14 dias)
 - [x] Automatização do fluxo — `pipeline.py` + agendamento (Task Scheduler / cron)
 - [x] Análises avançadas de BI — `analise_bi.py` (coorte, LTV, RFM, cesta, ABC/XYZ, estoque, cancelamento)

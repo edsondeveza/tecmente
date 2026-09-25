@@ -5,10 +5,18 @@ Agrupa os módulos do pipeline sob um único comando instalável:
     tecmente pipeline                        # pipeline completo
     tecmente gerar | extrair | tratar | visualizar | interativo | prever | bi | validar
 
-Opcionais são repassados ao script alvo após o comando, ex.:
+Opcionais são repassados ao script alvo após o comando:
 
-    tecmente prever --steps 12
-    tecmente visualizar --fonte sql --dados "C:\\dados"
+    tecmente prever --dias_prever 7
+    tecmente visualizar --fonte sql
+    tecmente prever --backtest 6
+
+O separador ``--`` também é aceito, se preferir separar explicitamente:
+
+    tecmente prever -- --dias_prever 7
+
+Ressalva: os valores precisam ser flags que o script alvo reconhece. Confira
+com ``python <script>.py --help`` antes de repassá-los.
 """
 
 from __future__ import annotations
@@ -45,14 +53,19 @@ def main() -> None:
         nargs="*",
         help="Argumentos adicionais repassados ao script alvo.",
     )
-    args = parser.parse_args()
+    args, extras = parser.parse_known_args()
+
+    # Tudo que o CLI não reconhece é repassado ao script alvo. Sem isto, um
+    # `tecmente prever --dias_prever 7` morreria com "unrecognized arguments",
+    # apesar de o pass-through estar documentado.
+    repassados = [*extras, *args.args]
 
     script = _PROJETO_ROOT / _SCRIPTS[args.comando]
     if not script.exists():
         sys.stderr.write(f"Script não encontrado: {script}\n")
         sys.exit(1)
 
-    resultado = subprocess.run([sys.executable, str(script), *args.args])
+    resultado = subprocess.run([sys.executable, str(script), *repassados])
     sys.exit(resultado.returncode)
 
 
