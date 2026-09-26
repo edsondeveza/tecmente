@@ -36,7 +36,7 @@ A **TecMente** é uma empresa fictícia de e-commerce de informática criada exc
 
 ```
 tecmente/
-├── gerador_mestre.py             ← popula o banco completo
+├── gerador_mestre.py             ← popula o banco (2 passos: --clientes, --pedidos)
 ├── extrator.py                   ← extração semanal de dados brutos (DBA)
 ├── tratador.py                   ← tratamento dos dados brutos (Analista)
 ├── visualizador.py               ← gráficos estáticos (BI)
@@ -46,14 +46,18 @@ tecmente/
 ├── validador_coerencia.py        ← checks de coerência das regras de negócio
 ├── pipeline.py                   ← orquestra todo o fluxo automaticamente
 ├── config.py                     ← configuração centralizada (.env via python-dotenv)
-├── pyproject.toml                ← dependências do Poetry
+├── src/tecmente/                 ← pacote instalado em modo editável (poetry install)
+│   ├── dados.py                  ← fonte única: pasta tratada + chaveamento csv|sql
+│   └── tecmente_cli.py           ← entry point do comando `tecmente`
+├── pyproject.toml                ← dependências do Poetry + [project.scripts]
 ├── .env.example                  ← modelo de credenciais (copie para .env)
 ├── tests/                        ← testes unitários (pytest)
 ├── .github/workflows/ci.yml      ← CI (ruff + pytest)
 ├── sql/
 │   └── tecmente_schema.sql    ← schema + views analíticas (DBA executa primeiro)
 ├── data/
-│   └── AAAA-MM-DD_tratado/       ← pasta gerada pelo tratador.py
+│   ├── AAAA-MM-DD/                ← extração bruta do extrator.py
+│   └── AAAA-MM-DD_tratado/        ← saída do tratador.py
 │       ├── vendas_tratado.csv
 │       ├── vendas_cancelados.csv
 │       ├── produtos_estoque_tratado.csv
@@ -78,8 +82,10 @@ tecmente/
 ```
 tecmente_schema.sql
         ↓ DBA cria o banco
-gerador_mestre.py
-        ↓ DBA popula com dados sintéticos
+gerador_mestre.py --clientes
+        ↓ DBA popula dimensões, produtos, funcionários e clientes
+gerador_mestre.py --pedidos
+        ↓ pedidos + estoque temporal (o saldo nasce da demanda real)
 extrator.py
         ↓ DBA extrai dados brutos semanalmente → data/AAAA-MM-DD/
 tratador.py
@@ -93,9 +99,17 @@ previsor.py (opcional)
 analise_bi.py (opcional)
         ↓ BI gera análises avançadas → output/analises/
 
-# Orquestração automática de todo o fluxo:
+# Ou via CLI (qualquer etapa, e o pipeline inteiro):
+poetry run tecmente validar
+poetry run tecmente pipeline --prever --bi
+
+# Ou orquestrando tudo num comando só:
 pipeline.py --prever --bi
 ```
+
+> **Por que o gerador tem dois passos:** o estoque é derivado das vendas, então
+> não existe antes de os pedidos existirem. Rodar só `--clientes` deixa a tabela
+> `estoque` vazia por design — e `data/` continua válido, só que sem saldo.
 
 ---
 
@@ -174,9 +188,9 @@ O `gerador_mestre.py` gera dados com **ruído realista intencional** para exerci
 
 ### Por que o estoque é temporal
 
-Um snapshot único de saldo é um número sem significado: com 10 anos de histórico, todo produto que já vendeu teria estoque zero, e todo produto parado teria estoque intacto. Os dois casos viram ruído, e um alerta de ruptura calculado sobre isso não diz nada.
+O modelo anterior guardava **um único saldo por produto × loja**, sorteado a partir da faixa de preço (base × fator aleatório entre 0,3 e 1,7). Esse número era arbitrário: não tinha relação nenhuma com a demanda. Dividido pelo giro real, produzia uma cobertura de dias sem significado — qualquer alerta de ruptura calculado sobre ela era ruído, e o alerta de excesso nunca tinha como disparar.
 
-Guardando o saldo ao longo do tempo, a cobertura em dias passa a ser comparável ao giro real do período, e a pergunta "este SKU está mal posicionado?" tem resposta verificável. O extrator lê apenas o snapshot corrente (`ROW_NUMBER()` por produto/loja) para não duplicar as linhas.
+Guardando o saldo ao longo do tempo e dimensionando cada snapshot a partir da demanda observada, a cobertura em dias passa a ser comparável ao giro real do período, e a pergunta "este SKU está mal posicionado?" ganha resposta verificável. O extrator lê apenas o snapshot corrente (`ROW_NUMBER()` por produto/loja) para não duplicar as linhas.
 
 ### Catálogo de ruído
 
@@ -310,6 +324,68 @@ poetry run python pipeline.py --prever --bi
 poetry run python pipeline.py --dias 7 --prever --bi
 ```
 
+### CLI unificado
+
+O pacote `src/tecmente/` instala o comando `tecmente`, que dispara qualquer etapa
+do fluxo por `subprocess`. É a mesma coisa que chamar o script direto — útil para
+não repetir o nome do arquivo e para descoberta (`--help` lista os comandos):
+
+```bash
+poetry run tecmente <comando> [opcionais]
+```
+
+| Comando        | Executa                  |
+| -------------- | ------------------------ |
+| `gerar`        | `gerador_mestre.py`      |
+| `extrair`      | `extrator.py`            |
+| `tratar`       | `tratador.py`            |
+| `visualizar`   | `visualizador.py`        |
+| `interativo`   | `visualizador_interativo.py` |
+| `prever`       | `previsor.py`            |
+| `bi`           | `analise_bi.py`          |
+| `validar`      | `validador_coerencia.py` |
+| `pipeline`     | `pipeline.py`            |
+
+Opcionais são repassados ao script alvo:
+
+```bash
+poetry run tecmente prever --dias_prever 7
+poetry run tecmente prever --backtest 6
+poetry run tecmente visualizar --fonte sql
+poetry run tecmente pipeline --prever --bi
+```
+
+Os valores precisam ser **flags que o script alvo reconhece** — confira com
+`poetry run python <script>.py --help`. O separador `--` também é aceito
+(`poetry run tecmente prever -- --dias_prever 7`).
+
+### Fonte de dados: CSV ou SQL
+
+`src/tecmente/dados.py` é a fonte única de configuração de dados: resolve a pasta
+`*_tratado` mais recente em `data/` e decide a leitura entre o CSV tratado e as
+views do MySQL.
+
+```bash
+# CSV (padrão): lê data/AAAA-MM-DD_tratado/
+poetry run python visualizador.py
+
+# SQL: consulta as views do banco
+poetry run python visualizador.py --fonte sql
+
+# Outra raiz de dados, sem editar código
+poetry run python visualizador.py --dados /caminho/para/data
+```
+
+Dois limites que valem saber antes de assumir:
+
+- **`--fonte` existe só em `visualizador.py` e `visualizador_interativo.py`.** Os
+  outros módulos (`previsor.py`, `analise_bi.py`, `extrator.py`, `tratador.py`)
+  leem CSV direto — não há chaveamento global de fonte para eles.
+- **Importar a constante congela o valor.** `from tecmente.dados import FONTE`
+  captura o valor no momento do import; para ler a configuração ativa em runtime
+  use `fonte_atual()`. É por isso que o header de log dos visualizadores mostra
+  a fonte real.
+
 ---
 
 ## Scripts
@@ -318,7 +394,11 @@ poetry run python pipeline.py --dias 7 --prever --bi
 
 Popula todas as tabelas do banco sem dependência de arquivo externo. Produtos, categorias, fornecedores, clientes, funcionários e pedidos são gerados internamente com templates por categoria.
 
-**Versão 1.1:** margens variáveis por faixa/categoria (custo do pedido = custo do produto), sazonalidade intra-semana e concentração geográfica dos clientes — ver seção "Dados sintéticos — características". Cada execução produz dados diferentes (sem seed fixo).
+**Versão 1.2:** estoque temporal derivado da demanda real — ver seção "Dados sintéticos — características". Cada execução produz dados diferentes (sem seed fixo).
+
+**Status v1.2:** `estoque` passou a ser histórico de saldos (produto × loja × data), com o saldo dimensionado pela demanda dos pedidos; `MULTIPLICADOR_EXCESSO` saiu do `analise_bi.py` e os dois limiares de cobertura passaram a ser medidos em dias. ✅
+
+**Versão 1.1:** margens variáveis por faixa/categoria (custo do pedido = custo do produto), sazonalidade intra-semana e concentração geográfica dos clientes — ver seção "Dados sintéticos — características".
 
 **Status v1.0:** `DB_CONFIG['database']` corrigido para `'tecmente'`. ✅
 
@@ -326,11 +406,14 @@ Popula todas as tabelas do banco sem dependência de arquivo externo. Produtos, 
 
 Responsabilidade exclusiva do DBA. Conecta ao banco, executa as queries e grava os CSVs exatamente como os dados estão armazenados — sem transformações, cálculos ou mascaramento.
 
-Tratamento de erros por tipo dentro da função `_executar_e_gravar`:
+Falha de query ou de arquivo **não é engolida**: `_executar_e_gravar` propaga o erro e quem trata é o `main()`, por tipo:
 
-- `mysql.connector.Error` — erros de banco (query inválida, timeout, conexão perdida)
-- `OSError` — erros de arquivo (disco cheio, sem permissão de escrita)
+- `mysql.connector.Error` — erros de banco (query inválida, timeout, conexão perdida): propagados de `cur.execute()` e capturados em `main()`, que registra a etapa em erro e sai com código 1
+- `OSError` — erros de arquivo (disco cheio, sem permissão de escrita): convertido em `RuntimeError` dentro de `_executar_e_gravar`
+- `RuntimeError` — query que volta vazia. Toda tabela de origem é populada pelo gerador, então zero linha significa query errada, não "não há dados"
 - `logger.exception()` no `main()` — grava o traceback completo no log automaticamente
+
+A propagação é deliberada: engolir a exceção escrevia um CSV de 0 linhas, deixava o arquivo da execução anterior no lugar e ainda reportava sucesso — o tratamento seguinte consumia dado velho sem nenhum sinal de que a extração tinha falhado.
 
 Códigos de saída documentados:
 
@@ -405,7 +488,7 @@ Dashboards gerados (Plotly):
 
 Previsão de vendas com **Random Forest** (scikit-learn). Agrega a receita diária, constrói features de calendário (dia da semana, mês, semana do ano) e defasagens (lag 1/7/14), treina o modelo e projeta **14 dias** à frente de forma recursiva.
 
-Saídas em `output/predicoes/`: CSV com a previsão (`previsao_vendas.csv`), relatório (`relatorio_previsao.txt`) e gráfico HTML (`previsao_vendas.html`).
+Saídas: CSV com a previsão (`output/predicoes/previsao_vendas.csv`) e relatório (`output/predicoes/relatorio_previsao.txt`); o gráfico interativo vai para `output/graficos/previsao_vendas.html`, junto dos demais gráficos do projeto.
 
 **Métricas — leia o horizonte, não só o dia.** O relatório traz três leituras do mesmo erro, porque elas respondem perguntas diferentes:
 
@@ -444,7 +527,7 @@ Módulo de análises avançadas de BI (papel: Analista de BI Sênior) que lê os
 
 Um relatório consolidado (`relatorio_analises.txt`) resume os principais achados. A análise respeita o valor real do pedido mesmo quando o CSV repete `valor_total` por item — via agregação no nível de pedido antes das somas.
 
-A saúde de estoque compara a cobertura em dias contra dois limiares, ambos na mesma unidade (60 e 180 dias). Misturar um limiar em dias com um multiplicador sobre a mediana produz limiares de 60 e 270 dias — e 270 nunca dispara numa distribuição cujo máximo é ~215, ou seja, um alerta que nunca aparece no relatório. Na base atual: 139 saudáveis, 9 em risco de ruptura, 5 em excesso de capital e 1 sem demanda.
+A saúde de estoque compara a cobertura em dias contra dois limiares, ambos na mesma unidade: 60 dias para ruptura e 180 para excesso. Misturar um limiar em dias com um multiplicador sobre a mediana produzia limiares de 60 e 270 dias — e 270 nunca dispara numa distribuição cujo máximo é ~215, ou seja, um alerta que nunca aparecia no relatório. Na base atual: 139 saudáveis, 9 em risco de ruptura, 5 em excesso de capital e 1 sem demanda.
 
 **Status v1.1:** 7 análises implementadas e testadas (17 testes unitários). ✅
 
@@ -562,9 +645,47 @@ Comparação entre faturamento total e ticket médio por produto, destacando ite
 
 A análise evidencia concentração de receita em categorias, produtos e vendedores específicos, reforçando a importância de estratégias focadas em Pareto, otimização comercial e gestão de mix de produtos para maximizar resultados.
 
+## Testes e CI
+
+A suíte roda sem banco de dados: 143 testes, todos com pandas/pytest.
+
+```bash
+poetry run ruff check .        # lint
+poetry run ruff format .       # formata
+poetry run pytest              # suíte completa + cobertura
+poetry run pytest -k Nome      # um teste só
+poetry run pytest --no-cov     # sem medir cobertura (mais rápido)
+```
+
+O `addopts` de `[tool.pytest.ini_options]` já injeta `--cov` nos 7 módulos e um
+gate `--cov-fail-under=55`, então `pytest` sozinho falha se a cobertura cair.
+
+| Módulo                | Cobertura | Observação                                              |
+| --------------------- | --------- | ------------------------------------------------------- |
+| `src/tecmente/dados.py` | 96%    | CSV e SQL com banco mockado                              |
+| `src/tecmente/tecmente_cli.py` | 95% | pass-through de flags e return codes do subprocess |
+| `tratador.py`         | 76%       | as 4 rotinas `tratar_*` e o relatório de qualidade      |
+| `previsor.py`         | 69%       | métricas, baseline, backtest e previsão recursiva      |
+| `analise_bi.py`       | 64%       | as 7 análises, cada uma com fixture determinística     |
+| `pipeline.py`         | 54%       | encadeamento e propagação de falha                      |
+| `gerador_mestre.py`   | 29%       | só as funções puras — o resto exige MySQL vivo         |
+
+**Sobre o `gerador_mestre.py`:** ele entra na medição porque deixar de fora
+inflaria o número. Os 29% vêm inteiramente das funções puras testadas em
+`tests/test_estoque.py` (`_datas_snapshot`, `_demanda_janela`, `_nivel_estoque`);
+todo o restante — SQL, `executemany`, Faker, o laço de 100 mil pedidos — só é
+exercitado contra o banco. É esse módulo que puxa o agregado para 55% mesmo com
+os módulos de lógica real entre 64% e 96%.
+
+**CI** (`.github/workflows/ci.yml`): a cada push em `main` e em todo pull request,
+em matriz `ubuntu-latest` + `windows-latest`, com serviço MySQL 8.0. Roda
+`ruff check`, `ruff format --check` e `pytest`.
+
+---
+
 ## Padrões adotados
 
-- **PEP 8** — estilo de código (snake_case, 79 caracteres, imports organizados)
+- **PEP 8** — estilo de código (snake_case, imports organizados), com `ruff` enforcing `line-length = 88`
 - **PEP 257** — docstrings com `Args:`, `Returns:` e `Raises:`
 - **PEP 484** — type hints em todas as funções
 
@@ -574,16 +695,18 @@ A análise evidencia concentração de receita em categorias, produtos e vendedo
 
 | Etapa               | Script                          | Status          | Validado em |
 | ------------------- | ------------------------------- | --------------- | ----------- |
-| Schema do banco     | `tecmente_schema.sql`           | ✅ Concluído     | 2026-04-13  |
+| Schema do banco     | `tecmente_schema.sql`           | ✅ Concluído     | 2026-09-25  |
 | Geração de dados    | `gerador_mestre.py`             | ✅ Concluído     | 2026-09-25  |
-| Extração DBA        | `extrator.py`                   | ✅ Concluído     | 2026-04-13 |
-| Tratamento Analista | `tratador.py`                   | ✅ Concluído     | 2026-04-13 |
-| Entrega ao BI       | `visualizador.py`               | ✅ Concluído     | 2026-04-13 |
-| Dashboards Plotly   | `visualizador_interativo.py`    | ✅ Concluído     | 2026-09-14 |
-| Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-25 |
-| Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-18 |
-| Análises de BI      | `analise_bi.py`                 | ✅ Concluído     | 2026-09-18 |
-| Coerência dos dados | `validador_coerencia.py`        | ✅ Concluído     | 2026-09-25 |
+| Extração DBA        | `extrator.py`                   | ✅ Concluído     | 2026-09-25  |
+| Tratamento Analista | `tratador.py`                   | ✅ Concluído     | 2026-09-25  |
+| Entrega ao BI       | `visualizador.py`               | ✅ Concluído     | 2026-09-25  |
+| Dashboards Plotly   | `visualizador_interativo.py`    | ✅ Concluído     | 2026-09-25  |
+| Previsão ML         | `previsor.py`                   | ✅ Concluído     | 2026-09-25  |
+| Automação do fluxo  | `pipeline.py`                   | ✅ Concluído     | 2026-09-25  |
+| Análises de BI      | `analise_bi.py`                 | ✅ Concluído     | 2026-09-25  |
+| Coerência dos dados | `validador_coerencia.py`        | ✅ Concluído     | 2026-09-25  |
+| Pacote e CLI        | `src/tecmente/`                 | ✅ Concluído     | 2026-09-25  |
+| Testes e CI         | `tests/` + `.github/workflows/` | ✅ Concluído     | 2026-09-25  |
 
 ---
 

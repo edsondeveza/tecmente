@@ -30,7 +30,7 @@ Uso
     python previsor.py --teste_dias 60     # mais dias de validação
 
 Autor: Edson Deveza — Data Scientist
-Versão: 1.0
+Versão: 1.1 (métricas de horizonte, WAPE, baseline e backtest)
 """
 
 from __future__ import annotations

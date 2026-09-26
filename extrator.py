@@ -54,7 +54,7 @@ Pré-requisitos
 - Dependência: ``mysql-connector-python``
 
 Autor: Edson Deveza — DBA
-Versão: 1.0 (extração pura, sem transformações)
+Versão: 1.1 (extração pura, sem transformações; erros propagados)
 """
 
 from __future__ import annotations

@@ -40,7 +40,7 @@ Uso
     python analise_bi.py --apenas coorte,abc   # múltiplas pelo nome
 
 Autor: Edson Deveza — Analista de BI Sênior
-Versão: 1.0
+Versão: 1.1 (limiares de cobertura em dias)
 """
 
 from __future__ import annotations

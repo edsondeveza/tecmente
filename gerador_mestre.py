@@ -29,7 +29,7 @@ Ajuste as constantes no bloco "CONFIGURAÇÕES" antes de executar:
 - ``random.seed()``  : remova ou altere para gerar dados diferentes a cada run
 
 Autor: Edson Deveza
-Versão: 1.1
+Versão: 1.2 (estoque temporal derivado da demanda)
 """
 
 from __future__ import annotations
